@@ -1,0 +1,61 @@
+---
+- name: Configure host identity for AAP install
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    target_fqdn: "{{ target_fqdn | default(default_fqdn) }}"
+    admin_password: "{{ admin_password | default('') }}"
+
+  tasks:
+    - name: Set hostname to target FQDN
+      ansible.builtin.hostname:
+        name: "{{ target_fqdn }}"
+
+    - name: Compute primary IP
+      ansible.builtin.set_fact:
+        primary_ip: "{{ ansible_default_ipv4.address | default((ansible_all_ipv4_addresses | first), true) }}"
+
+    - name: Ensure /etc/hosts entry with aap alias
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '.*\s{{ target_fqdn | regex_escape }}(\s|$)'
+        line: "{{ primary_ip }} {{ target_fqdn }} aap"
+        state: present
+
+    - name: Ensure admin user exists
+      ansible.builtin.user:
+        name: admin
+        shell: /bin/bash
+        create_home: true
+        state: present
+
+    - name: Set admin password when provided
+      ansible.builtin.user:
+        name: admin
+        password: "{{ admin_password | password_hash('sha512') }}"
+      when: admin_password | length > 0
+
+    - name: Configure passwordless sudo for admin
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/admin
+        content: "admin ALL=(ALL) NOPASSWD: ALL\n"
+        owner: root
+        group: root
+        mode: '0440'
+
+    - name: Ensure admin .ssh dir exists
+      ansible.builtin.file:
+        path: /home/admin/.ssh
+        state: directory
+        owner: admin
+        group: admin
+        mode: '0700'
+
+    - name: Generate admin ssh key if missing
+      become_user: admin
+      ansible.builtin.openssh_keypair:
+        path: /home/admin/.ssh/id_ed25519
+        type: ed25519
+        state: present

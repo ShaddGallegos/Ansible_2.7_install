@@ -1,0 +1,293 @@
+---
+- name: Create AAP controller resources for workflow install
+  hosts: controller
+  gather_facts: false
+  collections:
+    - awx.awx
+
+  vars:
+    controller_host: "{{ aap_controller_host }}"
+    controller_validate_certs: "{{ aap_validate_certs }}"
+
+    survey_common:
+      name: "AAP 2.7 Install Survey"
+      description: "Values required for AAP 2.7 setup"
+      spec:
+        - question_name: "Target FQDN"
+          question_description: "System FQDN for the install node"
+          required: true
+          type: text
+          variable: target_fqdn
+          default: "{{ default_fqdn }}"
+          min: 3
+          max: 253
+        - question_name: "Admin Password"
+          question_description: "Password used for admin and inventory values"
+          required: true
+          type: password
+          variable: admin_password
+          min: 8
+          max: 128
+        - question_name: "RHSM Username"
+          question_description: "Red Hat username"
+          required: true
+          type: text
+          variable: rhsm_username
+          default: "{{ registry_username }}"
+          min: 1
+          max: 128
+        - question_name: "RHSM Password"
+          question_description: "Red Hat password"
+          required: true
+          type: password
+          variable: rhsm_password
+          min: 1
+          max: 128
+        - question_name: "Bundle URL"
+          question_description: "AAP 2.7 bundle URL"
+          required: true
+          type: text
+          variable: bundle_url
+          default: "{{ default_bundle_url }}"
+          min: 10
+          max: 2048
+        - question_name: "Bundle File Name"
+          question_description: "File name under /home/admin/Downloads"
+          required: true
+          type: text
+          variable: bundle_file
+          default: "{{ default_bundle_file }}"
+          min: 5
+          max: 255
+        - question_name: "Execution Playbook"
+          question_description: "ansible.containerized_installer playbook to run"
+          required: true
+          type: multiplechoice
+          variable: execution_playbook
+          default: "install"
+          choices: |
+            install
+            backup
+            bundle
+            install_standalone_mcp
+            log_gathering
+            restore
+            uninstall
+
+  tasks:
+    - name: Ensure organization exists
+      awx.awx.organization:
+        name: "{{ aap_org_name }}"
+        state: present
+        controller_host: "{{ controller_host }}"
+        validate_certs: "{{ controller_validate_certs }}"
+        controller_oauthtoken: "{{ aap_controller_oauthtoken if (aap_controller_oauthtoken | length > 0) else omit }}"
+        controller_username: "{{ aap_controller_username if (aap_controller_oauthtoken | length == 0) else omit }}"
+        controller_password: "{{ aap_controller_password if (aap_controller_oauthtoken | length == 0) else omit }}"
+
+    - name: Ensure inventory exists
+      awx.awx.inventory:
+        name: "{{ aap_inventory_name }}"
+        description: "{{ aap_inventory_description }}"
+        organization: "{{ aap_org_name }}"
+        state: present
+        controller_host: "{{ controller_host }}"
+        validate_certs: "{{ controller_validate_certs }}"
+        controller_oauthtoken: "{{ aap_controller_oauthtoken if (aap_controller_oauthtoken | length > 0) else omit }}"
+        controller_username: "{{ aap_controller_username if (aap_controller_oauthtoken | length == 0) else omit }}"
+        controller_password: "{{ aap_controller_password if (aap_controller_oauthtoken | length == 0) else omit }}"
+
+    - name: Ensure machine credential exists
+      awx.awx.credential:
+        name: "{{ machine_credential_name }}"
+        organization: "{{ aap_org_name }}"
+        credential_type: Machine
+        state: present
+        inputs:
+          username: "{{ machine_credential_username }}"
+          password: "{{ machine_credential_password }}"
+          become_method: sudo
+        controller_host: "{{ controller_host }}"
+        validate_certs: "{{ controller_validate_certs }}"
+        controller_oauthtoken: "{{ aap_controller_oauthtoken if (aap_controller_oauthtoken | length > 0) else omit }}"
+        controller_username: "{{ aap_controller_username if (aap_controller_oauthtoken | length == 0) else omit }}"
+        controller_password: "{{ aap_controller_password if (aap_controller_oauthtoken | length == 0) else omit }}"
+
+    - name: Ensure registry credential exists
+      awx.awx.credential:
+        name: "{{ registry_credential_name }}"
+        organization: "{{ aap_org_name }}"
+        credential_type: Container Registry
+        state: present
+        inputs:
+          host: registry.redhat.io
+          username: "{{ registry_username }}"
+          password: "{{ registry_password }}"
+        controller_host: "{{ controller_host }}"
+        validate_certs: "{{ controller_validate_certs }}"
+        controller_oauthtoken: "{{ aap_controller_oauthtoken if (aap_controller_oauthtoken | length > 0) else omit }}"
+        controller_username: "{{ aap_controller_username if (aap_controller_oauthtoken | length == 0) else omit }}"
+        controller_password: "{{ aap_controller_password if (aap_controller_oauthtoken | length == 0) else omit }}"
+
+    - name: Ensure project exists
+      awx.awx.project:
+        name: "{{ workflow_project_name }}"
+        organization: "{{ aap_org_name }}"
+        scm_type: git
+        scm_url: "{{ workflow_project_url }}"
+        scm_branch: "{{ workflow_project_branch }}"
+        scm_update_on_launch: true
+        state: present
+        controller_host: "{{ controller_host }}"
+        validate_certs: "{{ controller_validate_certs }}"
+        controller_oauthtoken: "{{ aap_controller_oauthtoken if (aap_controller_oauthtoken | length > 0) else omit }}"
+        controller_username: "{{ aap_controller_username if (aap_controller_oauthtoken | length == 0) else omit }}"
+        controller_password: "{{ aap_controller_password if (aap_controller_oauthtoken | length == 0) else omit }}"
+
+    - name: Ensure prework job template exists
+      awx.awx.job_template:
+        name: "{{ jt_prework_name }}"
+        organization: "{{ aap_org_name }}"
+        inventory: "{{ aap_inventory_name }}"
+        project: "{{ workflow_project_name }}"
+        playbook: "aap_workflow_project/playbooks/prework.yml"
+        job_type: run
+        credentials:
+          - "{{ machine_credential_name }}"
+        survey_enabled: true
+        survey_spec: "{{ survey_common }}"
+        state: present
+        controller_host: "{{ controller_host }}"
+        validate_certs: "{{ controller_validate_certs }}"
+        controller_oauthtoken: "{{ aap_controller_oauthtoken if (aap_controller_oauthtoken | length > 0) else omit }}"
+        controller_username: "{{ aap_controller_username if (aap_controller_oauthtoken | length == 0) else omit }}"
+        controller_password: "{{ aap_controller_password if (aap_controller_oauthtoken | length == 0) else omit }}"
+
+    - name: Ensure host identity job template exists
+      awx.awx.job_template:
+        name: "{{ jt_host_identity_name }}"
+        organization: "{{ aap_org_name }}"
+        inventory: "{{ aap_inventory_name }}"
+        project: "{{ workflow_project_name }}"
+        playbook: "aap_workflow_project/playbooks/host_identity.yml"
+        job_type: run
+        credentials:
+          - "{{ machine_credential_name }}"
+        survey_enabled: true
+        survey_spec: "{{ survey_common }}"
+        state: present
+        controller_host: "{{ controller_host }}"
+        validate_certs: "{{ controller_validate_certs }}"
+        controller_oauthtoken: "{{ aap_controller_oauthtoken if (aap_controller_oauthtoken | length > 0) else omit }}"
+        controller_username: "{{ aap_controller_username if (aap_controller_oauthtoken | length == 0) else omit }}"
+        controller_password: "{{ aap_controller_password if (aap_controller_oauthtoken | length == 0) else omit }}"
+
+    - name: Ensure download bundle job template exists
+      awx.awx.job_template:
+        name: "{{ jt_download_name }}"
+        organization: "{{ aap_org_name }}"
+        inventory: "{{ aap_inventory_name }}"
+        project: "{{ workflow_project_name }}"
+        playbook: "aap_workflow_project/playbooks/download_bundle.yml"
+        job_type: run
+        credentials:
+          - "{{ machine_credential_name }}"
+        survey_enabled: true
+        survey_spec: "{{ survey_common }}"
+        state: present
+        controller_host: "{{ controller_host }}"
+        validate_certs: "{{ controller_validate_certs }}"
+        controller_oauthtoken: "{{ aap_controller_oauthtoken if (aap_controller_oauthtoken | length > 0) else omit }}"
+        controller_username: "{{ aap_controller_username if (aap_controller_oauthtoken | length == 0) else omit }}"
+        controller_password: "{{ aap_controller_password if (aap_controller_oauthtoken | length == 0) else omit }}"
+
+    - name: Ensure install job template exists
+      awx.awx.job_template:
+        name: "{{ jt_install_name }}"
+        organization: "{{ aap_org_name }}"
+        inventory: "{{ aap_inventory_name }}"
+        project: "{{ workflow_project_name }}"
+        playbook: "aap_workflow_project/playbooks/install_aap.yml"
+        job_type: run
+        credentials:
+          - "{{ machine_credential_name }}"
+          - "{{ registry_credential_name }}"
+        survey_enabled: true
+        survey_spec: "{{ survey_common }}"
+        state: present
+        controller_host: "{{ controller_host }}"
+        validate_certs: "{{ controller_validate_certs }}"
+        controller_oauthtoken: "{{ aap_controller_oauthtoken if (aap_controller_oauthtoken | length > 0) else omit }}"
+        controller_username: "{{ aap_controller_username if (aap_controller_oauthtoken | length == 0) else omit }}"
+        controller_password: "{{ aap_controller_password if (aap_controller_oauthtoken | length == 0) else omit }}"
+
+    - name: Ensure workflow template exists
+      awx.awx.workflow_job_template:
+        name: "{{ aap_workflow_template_name }}"
+        organization: "{{ aap_org_name }}"
+        state: present
+        survey_enabled: true
+        survey_spec: "{{ survey_common }}"
+        controller_host: "{{ controller_host }}"
+        validate_certs: "{{ controller_validate_certs }}"
+        controller_oauthtoken: "{{ aap_controller_oauthtoken if (aap_controller_oauthtoken | length > 0) else omit }}"
+        controller_username: "{{ aap_controller_username if (aap_controller_oauthtoken | length == 0) else omit }}"
+        controller_password: "{{ aap_controller_password if (aap_controller_oauthtoken | length == 0) else omit }}"
+
+    - name: Ensure workflow node prework exists
+      awx.awx.workflow_job_template_node:
+        workflow_job_template: "{{ aap_workflow_template_name }}"
+        identifier: node_prework
+        unified_job_template: "{{ jt_prework_name }}"
+        lookup_organization: "{{ aap_org_name }}"
+        success_nodes:
+          - node_host_identity
+        state: present
+        controller_host: "{{ controller_host }}"
+        validate_certs: "{{ controller_validate_certs }}"
+        controller_oauthtoken: "{{ aap_controller_oauthtoken if (aap_controller_oauthtoken | length > 0) else omit }}"
+        controller_username: "{{ aap_controller_username if (aap_controller_oauthtoken | length == 0) else omit }}"
+        controller_password: "{{ aap_controller_password if (aap_controller_oauthtoken | length == 0) else omit }}"
+
+    - name: Ensure workflow node host identity exists
+      awx.awx.workflow_job_template_node:
+        workflow_job_template: "{{ aap_workflow_template_name }}"
+        identifier: node_host_identity
+        unified_job_template: "{{ jt_host_identity_name }}"
+        lookup_organization: "{{ aap_org_name }}"
+        success_nodes:
+          - node_download
+        state: present
+        controller_host: "{{ controller_host }}"
+        validate_certs: "{{ controller_validate_certs }}"
+        controller_oauthtoken: "{{ aap_controller_oauthtoken if (aap_controller_oauthtoken | length > 0) else omit }}"
+        controller_username: "{{ aap_controller_username if (aap_controller_oauthtoken | length == 0) else omit }}"
+        controller_password: "{{ aap_controller_password if (aap_controller_oauthtoken | length == 0) else omit }}"
+
+    - name: Ensure workflow node download exists
+      awx.awx.workflow_job_template_node:
+        workflow_job_template: "{{ aap_workflow_template_name }}"
+        identifier: node_download
+        unified_job_template: "{{ jt_download_name }}"
+        lookup_organization: "{{ aap_org_name }}"
+        success_nodes:
+          - node_install
+        state: present
+        controller_host: "{{ controller_host }}"
+        validate_certs: "{{ controller_validate_certs }}"
+        controller_oauthtoken: "{{ aap_controller_oauthtoken if (aap_controller_oauthtoken | length > 0) else omit }}"
+        controller_username: "{{ aap_controller_username if (aap_controller_oauthtoken | length == 0) else omit }}"
+        controller_password: "{{ aap_controller_password if (aap_controller_oauthtoken | length == 0) else omit }}"
+
+    - name: Ensure workflow node install exists
+      awx.awx.workflow_job_template_node:
+        workflow_job_template: "{{ aap_workflow_template_name }}"
+        identifier: node_install
+        unified_job_template: "{{ jt_install_name }}"
+        lookup_organization: "{{ aap_org_name }}"
+        state: present
+        controller_host: "{{ controller_host }}"
+        validate_certs: "{{ controller_validate_certs }}"
+        controller_oauthtoken: "{{ aap_controller_oauthtoken if (aap_controller_oauthtoken | length > 0) else omit }}"
+        controller_username: "{{ aap_controller_username if (aap_controller_oauthtoken | length == 0) else omit }}"
+        controller_password: "{{ aap_controller_password if (aap_controller_oauthtoken | length == 0) else omit }}"

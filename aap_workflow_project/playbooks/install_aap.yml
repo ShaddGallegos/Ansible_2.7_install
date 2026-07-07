@@ -1,0 +1,89 @@
+---
+- name: Configure inventory-growth and install AAP 2.7
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    bundle_dir: "/home/admin/Downloads/ansible-automation-platform-containerized-setup-bundle-2.7-2"
+    inventory_file: "{{ bundle_dir }}/inventory-growth"
+    target_fqdn: "{{ target_fqdn | default(default_fqdn) }}"
+    admin_password: "{{ admin_password | default('') }}"
+    rhsm_username: "{{ rhsm_username | default(registry_username) }}"
+    rhsm_password: "{{ rhsm_password | default(registry_password) }}"
+    execution_playbook: "{{ execution_playbook | default('install') }}"
+    allowed_execution_playbooks:
+      - install
+      - backup
+      - bundle
+      - install_standalone_mcp
+      - log_gathering
+      - restore
+      - uninstall
+
+  tasks:
+    - name: Validate inventory-growth exists
+      ansible.builtin.stat:
+        path: "{{ inventory_file }}"
+      register: inv_stat
+
+    - name: Fail when inventory-growth missing
+      ansible.builtin.fail:
+        msg: "inventory-growth not found at {{ inventory_file }}"
+      when: not inv_stat.stat.exists
+
+    - name: Replace aap.example.com globally
+      ansible.builtin.replace:
+        path: "{{ inventory_file }}"
+        regexp: 'aap\.example\.com'
+        replace: 'aap ansible_host={{ ansible_default_ipv4.address }} real_hostname={{ ansible_hostname }}'
+
+    - name: Replace installer password placeholder
+      ansible.builtin.replace:
+        path: "{{ inventory_file }}"
+        regexp: 'password=<set your own>'
+        replace: 'password={{ admin_password }}'
+
+    - name: Enable collections
+      ansible.builtin.replace:
+        path: "{{ inventory_file }}"
+        regexp: 'collections=false'
+        replace: 'collections=true'
+
+    - name: Ensure [all:vars] exists
+      ansible.builtin.lineinfile:
+        path: "{{ inventory_file }}"
+        line: "[all:vars]"
+        state: present
+
+    - name: Set required all:vars entries
+      ansible.builtin.blockinfile:
+        path: "{{ inventory_file }}"
+        marker: "# {mark} MANAGED BY AAP WORKFLOW"
+        insertafter: '^\[all:vars\]$'
+        block: |
+          admin_password='{{ admin_password }}'
+          pg_admin_password='{{ admin_password }}'
+          registry_username='{{ rhsm_username }}'
+          registry_password='{{ rhsm_password }}'
+
+    - name: Validate requested execution playbook
+      ansible.builtin.assert:
+        that:
+          - execution_playbook in allowed_execution_playbooks
+        fail_msg: >-
+          execution_playbook '{{ execution_playbook }}' is invalid. Allowed values:
+          {{ allowed_execution_playbooks | join(', ') }}
+
+    - name: Run selected AAP containerized playbook
+      become_user: admin
+      ansible.builtin.command:
+        argv:
+          - ansible-playbook
+          - -i
+          - inventory-growth
+          - "ansible.containerized_installer.{{ execution_playbook }}"
+      args:
+        chdir: "{{ bundle_dir }}"
+      register: install_result
+      changed_when: true

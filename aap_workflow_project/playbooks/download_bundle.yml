@@ -1,0 +1,35 @@
+---
+- name: Download AAP bundle to target host
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    admin_download_dir: "/home/admin/Downloads"
+    bundle_url: "{{ bundle_url | default(default_bundle_url) }}"
+    bundle_file: "{{ bundle_file | default(default_bundle_file) }}"
+
+  tasks:
+    - name: Ensure /home/admin/Downloads exists
+      ansible.builtin.file:
+        path: "{{ admin_download_dir }}"
+        state: directory
+        owner: admin
+        group: admin
+        mode: '0755'
+
+    - name: Download bundle file
+      ansible.builtin.get_url:
+        url: "{{ bundle_url }}"
+        dest: "{{ admin_download_dir }}/{{ bundle_file }}"
+        mode: '0644'
+        owner: admin
+        group: admin
+
+    - name: Extract bundle
+      ansible.builtin.unarchive:
+        src: "{{ admin_download_dir }}/{{ bundle_file }}"
+        dest: "{{ admin_download_dir }}"
+        remote_src: true
+        owner: admin
+        group: admin
