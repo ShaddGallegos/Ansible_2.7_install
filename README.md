@@ -10,7 +10,7 @@ This folder contains a menu-driven bash helper for preparing and installing Red 
 ## What This Tool Does
 
 - Shows a checklist and readiness status with links.
-- Provides a checklist help submenu with detailed prerequisite guidance.
+- Provides contextual guidance per step (for example: `6?`).
 - Performs common prework for AAP installs.
 - Configures host identity requirements (FQDN, domain, `/etc/hosts`).
 - Optionally disables firewall and sets SELinux to permissive for install workflows.
@@ -18,8 +18,64 @@ This folder contains a menu-driven bash helper for preparing and installing Red 
 - Captures required credentials/tokens and stores them in a local env file with restricted permissions.
 - Downloads the AAP 2.7-2 containerized bundle to `/home/admin/Downloads/`.
 - Extracts the bundle and updates `inventory-growth` with requested values.
-- Runs installer command:
-  - `ansible-playbook -i inventory-growth ansible.containerized_installer.install`
+- Runs selected execution playbooks from `ansible.containerized_installer`:
+  - `install`
+  - `backup`
+  - `bundle`
+  - `install_standalone_mcp`
+  - `log_gathering`
+  - `restore`
+  - `uninstall`
+
+## Ansible Workflow (Controller-Driven)
+
+In addition to the local shell menu, this repo includes a controller-driven workflow project in `aap_workflow_project`.
+
+This path is intended for running installation as AAP Job Templates and Workflow Templates with surveys.
+
+### Workflow Directory
+
+- `aap_workflow_project/playbooks/create_controller_resources.yml`
+- `aap_workflow_project/playbooks/prework.yml`
+- `aap_workflow_project/playbooks/host_identity.yml`
+- `aap_workflow_project/playbooks/download_bundle.yml`
+- `aap_workflow_project/playbooks/install_aap.yml`
+
+### Workflow Setup
+
+1. Install required collection(s):
+
+```bash
+cd /home/sgallego/GIT/Ansible_2.7_install/aap_workflow_project
+ansible-galaxy collection install -r requirements.yml
+```
+
+2. Configure controller and credential values:
+
+- Edit `aap_workflow_project/group_vars/all.yml`
+- Set controller URL and auth (`aap_controller_host`, token or username/password)
+- Set credential values (`machine_credential_*`, `registry_*`)
+
+3. Confirm controller inventory endpoint file:
+
+- `aap_workflow_project/inventory/controller.ini`
+
+### Create Controller Resources
+
+```bash
+cd /home/sgallego/GIT/Ansible_2.7_install/aap_workflow_project
+ansible-playbook -i inventory/controller.ini playbooks/create_controller_resources.yml
+```
+
+This creates organization, inventory, credentials, project, job templates, and the workflow template.
+
+### Launch Workflow
+
+From the AAP Controller UI:
+
+1. Open the generated workflow template.
+2. Launch it and complete the survey.
+3. Choose `execution_playbook` value during launch (`install`, `backup`, `bundle`, `install_standalone_mcp`, `log_gathering`, `restore`, `uninstall`).
 
 ## Pre-Install Checklist
 
