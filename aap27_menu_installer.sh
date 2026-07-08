@@ -3,7 +3,7 @@ set -euo pipefail
 
 BUNDLE_FILE="ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64.tar.gz"
 BUNDLE_URL_DEFAULT="https://access.cdn.redhat.com/content/origin/files/sha256/5c/5c0e1834c1ae609ce840865b5aa279b5c5bde9118856b326f77cc5c8bf92d9af/ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64.tar.gz"
-BUNDLE_DIR_NAME="ansible-automation-platform-containerized-setup-bundle-2.7-2"
+BUNDLE_DIR_NAME="ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64"
 ADMIN_HOME="/home/admin"
 DOWNLOAD_DIR="${ADMIN_HOME}/Downloads"
 ENV_FILE="${ADMIN_HOME}/.aap27_install.env"
@@ -191,7 +191,7 @@ Step 8 - Extract Bundle
 -----------------------
 - Extracts tarball under /home/admin/Downloads.
 - Expected extraction directory:
-  /home/admin/Downloads/ansible-automation-platform-containerized-setup-bundle-2.7-2
+  /home/admin/Downloads/ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64
 EOF
       ;;
     9)
@@ -219,7 +219,7 @@ Step 10 - Run Installer
     - ansible.containerized_installer.uninstall
 
 Execution directory:
-/home/admin/Downloads/ansible-automation-platform-containerized-setup-bundle-2.7-2
+/home/admin/Downloads/ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64
 EOF
       ;;
     *)

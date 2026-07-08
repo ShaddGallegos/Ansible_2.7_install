@@ -5,7 +5,7 @@
   gather_facts: true
 
   vars:
-    bundle_dir: "/home/admin/Downloads/ansible-automation-platform-containerized-setup-bundle-2.7-2"
+    bundle_dir: "/home/admin/Downloads/ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64"
     inventory_file: "{{ bundle_dir }}/inventory-growth"
     target_fqdn: "{{ target_fqdn | default(default_fqdn) }}"
     admin_password: "{{ admin_password | default('') }}"
