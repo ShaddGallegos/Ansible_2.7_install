@@ -199,7 +199,7 @@ EOF
 Step 9 - Modify inventory-growth
 --------------------------------
 - Updates:
-  aap.example.com -> aap ansible_host={{ ansible_ip_address }} real_hostname={{ hostname }}
+  aap.example.com -> aap ansible_host={{ ansible_ip_address }} real_hostname={{ hostname }} ansible_user=admin ansible_ssh_private_key_file=/home/admin/.ssh/id_ed25519
   password=<set your own> -> password={{ admin_password }}
   collections=false -> collections=true
 - Ensures [all:vars] includes admin/postgres/registry values.
@@ -544,7 +544,7 @@ modify_inventory_growth() {
     save_env_kv "ADMIN_PASSWORD" "${admin_password}"
   fi
 
-  sed -i "s|aap.example.com|aap ansible_host={{ ansible_ip_address }} real_hostname={{ hostname }}|g" "${inv_file}"
+  sed -i "s|aap.example.com|aap ansible_host={{ ansible_ip_address }} real_hostname={{ hostname }} ansible_user=admin ansible_ssh_private_key_file=/home/admin/.ssh/id_ed25519|g" "${inv_file}"
   sed -i "s|password=<set your own>|password={{ admin_password }}|g" "${inv_file}"
   sed -i "s|collections=false|collections=true|g" "${inv_file}"
 
@@ -554,6 +554,8 @@ modify_inventory_growth() {
   upsert_inventory_var "${inv_file}" "pg_admin_password" "${admin_password}"
   upsert_inventory_var "${inv_file}" "registry_username" "${RHSM_USERNAME:-}"
   upsert_inventory_var "${inv_file}" "registry_password" "${RHSM_PASSWORD:-}"
+  upsert_inventory_var "${inv_file}" "ansible_user" "admin"
+  upsert_inventory_var "${inv_file}" "ansible_become" "true"
 
   ok "inventory-growth updated successfully: ${inv_file}"
 }
@@ -561,6 +563,7 @@ modify_inventory_growth() {
 run_execution_playbook() {
   local playbook_name="$1"
   local install_dir
+  local -a ansible_cmd
   install_dir="${DOWNLOAD_DIR}/${BUNDLE_DIR_NAME}"
 
   if ! id admin >/dev/null 2>&1; then
@@ -581,7 +584,27 @@ run_execution_playbook() {
   log "Starting playbook execution: ansible.containerized_installer.${playbook_name}"
   (
     cd "${install_dir}"
-    ansible-playbook -i inventory-growth "ansible.containerized_installer.${playbook_name}"
+    ansible_cmd=(
+      ansible-playbook
+      -i
+      inventory-growth
+      -u
+      admin
+      "ansible.containerized_installer.${playbook_name}"
+    )
+
+    if [[ -f "${ADMIN_HOME}/.ssh/id_ed25519" ]]; then
+      ansible_cmd+=(--private-key "${ADMIN_HOME}/.ssh/id_ed25519")
+    fi
+
+    if command -v runuser >/dev/null 2>&1; then
+      runuser -u admin -- "${ansible_cmd[@]}"
+    elif command -v sudo >/dev/null 2>&1; then
+      HOME="${ADMIN_HOME}" sudo -u admin "${ansible_cmd[@]}"
+    else
+      warn "Neither runuser nor sudo was found; running ansible-playbook as current user."
+      "${ansible_cmd[@]}"
+    fi
   )
 }
 

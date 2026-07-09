@@ -36,7 +36,7 @@
       ansible.builtin.replace:
         path: "{{ inventory_file }}"
         regexp: 'aap\.example\.com'
-        replace: 'aap ansible_host={{ ansible_default_ipv4.address }} real_hostname={{ ansible_hostname }}'
+        replace: 'aap ansible_host={{ ansible_default_ipv4.address }} real_hostname={{ ansible_hostname }} ansible_user=admin ansible_ssh_private_key_file=/home/admin/.ssh/id_ed25519'
 
     - name: Replace installer password placeholder
       ansible.builtin.replace:
@@ -66,6 +66,8 @@
           pg_admin_password='{{ admin_password }}'
           registry_username='{{ rhsm_username }}'
           registry_password='{{ rhsm_password }}'
+          ansible_user='admin'
+          ansible_become='true'
 
     - name: Validate requested execution playbook
       ansible.builtin.assert:
