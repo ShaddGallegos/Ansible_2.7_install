@@ -552,7 +552,7 @@ modify_inventory_growth() {
   if [[ "${target_domain}" == "${target_fqdn}" || -z "${target_domain}" ]]; then
     target_domain="localdomain"
   fi
-  host_line="aap ansible_host={{ ansible_ip_address }} real_hostname=${target_fqdn} ansible_user=admin ansible_ssh_private_key_file=/home/admin/.ssh/id_ed25519"
+  host_line="aap ansible_host=${target_fqdn} real_hostname=${target_fqdn} ansible_user=admin ansible_ssh_private_key_file=/home/admin/.ssh/id_ed25519"
 
   if [[ ! -f "${inv_file}" ]]; then
     err "inventory-growth not found: ${inv_file}"
@@ -681,6 +681,8 @@ run_execution_playbook() {
       ansible_become=false
       -e
       ansible_connection=ssh
+      -e
+      redis_mode=standalone
       -e
       "registry_username=${RHSM_USERNAME:-}"
       -e
