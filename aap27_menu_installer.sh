@@ -526,8 +526,23 @@ upsert_inventory_var() {
   fi
 }
 
+ensure_registry_credentials() {
+  load_env
+
+  if [[ -z "${RHSM_USERNAME:-}" ]]; then
+    read -r -p "Enter RHSM_USERNAME (Red Hat Login/CDN/registry/console username): " RHSM_USERNAME
+    save_env_kv "RHSM_USERNAME" "${RHSM_USERNAME}"
+  fi
+
+  if [[ -z "${RHSM_PASSWORD:-}" ]]; then
+    read_secret_prompt RHSM_PASSWORD "Enter RHSM_PASSWORD (Red Hat Login/CDN/registry/console password)"
+    save_env_kv "RHSM_PASSWORD" "${RHSM_PASSWORD}"
+  fi
+}
+
 modify_inventory_growth() {
   load_env
+  ensure_registry_credentials
 
   local inv_file admin_password target_fqdn target_domain host_line
   inv_file="${INVENTORY_FILE}"
@@ -582,6 +597,7 @@ modify_inventory_growth() {
 enforce_inventory_runtime_settings() {
   local inv_file="$1"
   local target_fqdn target_domain
+  ensure_registry_credentials
   target_fqdn="$(hostname -f 2>/dev/null || echo aap.localdomain)"
   target_domain="${target_fqdn#*.}"
   if [[ "${target_domain}" == "${target_fqdn}" || -z "${target_domain}" ]]; then
@@ -594,6 +610,8 @@ enforce_inventory_runtime_settings() {
   upsert_inventory_var "${inv_file}" "ansible_user" "admin"
   upsert_inventory_var "${inv_file}" "ansible_become" "false"
   upsert_inventory_var "${inv_file}" "ansible_connection" "ssh"
+  upsert_inventory_var "${inv_file}" "registry_username" "${RHSM_USERNAME:-}"
+  upsert_inventory_var "${inv_file}" "registry_password" "${RHSM_PASSWORD:-}"
 }
 
 get_inventory_var() {
@@ -659,6 +677,10 @@ run_execution_playbook() {
       ansible_become=false
       -e
       ansible_connection=ssh
+      -e
+      "registry_username=${RHSM_USERNAME:-}"
+      -e
+      "registry_password=${RHSM_PASSWORD:-}"
       "ansible.containerized_installer.${playbook_name}"
     )
 
