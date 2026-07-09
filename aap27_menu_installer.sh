@@ -529,9 +529,11 @@ upsert_inventory_var() {
 modify_inventory_growth() {
   load_env
 
-  local inv_file admin_password
+  local inv_file admin_password target_fqdn host_line
   inv_file="${INVENTORY_FILE}"
   admin_password="${ADMIN_PASSWORD:-}"
+  target_fqdn="$(hostname -f 2>/dev/null || echo aap.localdomain)"
+  host_line="aap ansible_host={{ ansible_ip_address }} real_hostname=${target_fqdn} ansible_user=admin ansible_ssh_private_key_file=/home/admin/.ssh/id_ed25519"
 
   if [[ ! -f "${inv_file}" ]]; then
     err "inventory-growth not found: ${inv_file}"
@@ -544,24 +546,16 @@ modify_inventory_growth() {
     save_env_kv "ADMIN_PASSWORD" "${admin_password}"
   fi
 
-  sed -i "s|aap.example.com|aap ansible_host={{ ansible_ip_address }} real_hostname={{ hostname }} ansible_user=admin ansible_ssh_private_key_file=/home/admin/.ssh/id_ed25519|g" "${inv_file}"
+  sed -E -i "s|aap\.example\.[A-Za-z0-9.-]+|${target_fqdn}|g" "${inv_file}"
+  sed -i "s|aap.example.com|${target_fqdn}|g" "${inv_file}"
   sed -i "s|password=<set your own>|password={{ admin_password }}|g" "${inv_file}"
   sed -i "s|collections=false|collections=true|g" "${inv_file}"
 
-  # Normalize the first host line so reruns cannot keep a root ansible_user.
-  awk '
+  # Normalize the first host line so reruns cannot keep stale host/domain or root ansible_user.
+  awk -v normalized_host_line="${host_line}" '
     /^[[:space:]]*#/ || /^\[/ || /^[[:space:]]*$/ { print; next }
     host_done == 0 {
-      line = $0
-      gsub(/ansible_user=[^[:space:]]+/, "ansible_user=admin", line)
-      gsub(/ansible_ssh_private_key_file=[^[:space:]]+/, "ansible_ssh_private_key_file=/home/admin/.ssh/id_ed25519", line)
-      if (line !~ /ansible_user=/) {
-        line = line " ansible_user=admin"
-      }
-      if (line !~ /ansible_ssh_private_key_file=/) {
-        line = line " ansible_ssh_private_key_file=/home/admin/.ssh/id_ed25519"
-      }
-      print line
+      print normalized_host_line
       host_done = 1
       next
     }
@@ -575,9 +569,22 @@ modify_inventory_growth() {
   upsert_inventory_var "${inv_file}" "registry_username" "${RHSM_USERNAME:-}"
   upsert_inventory_var "${inv_file}" "registry_password" "${RHSM_PASSWORD:-}"
   upsert_inventory_var "${inv_file}" "ansible_user" "admin"
-  upsert_inventory_var "${inv_file}" "ansible_become" "true"
+  upsert_inventory_var "${inv_file}" "ansible_become" "false"
+  upsert_inventory_var "${inv_file}" "ansible_connection" "ssh"
 
   ok "inventory-growth updated successfully: ${inv_file}"
+}
+
+enforce_inventory_runtime_settings() {
+  local inv_file="$1"
+  local target_fqdn
+  target_fqdn="$(hostname -f 2>/dev/null || echo aap.localdomain)"
+
+  sed -E -i "s|aap\.example\.[A-Za-z0-9.-]+|${target_fqdn}|g" "${inv_file}"
+
+  upsert_inventory_var "${inv_file}" "ansible_user" "admin"
+  upsert_inventory_var "${inv_file}" "ansible_become" "false"
+  upsert_inventory_var "${inv_file}" "ansible_connection" "ssh"
 }
 
 run_execution_playbook() {
@@ -601,6 +608,8 @@ run_execution_playbook() {
     return 1
   fi
 
+  enforce_inventory_runtime_settings "${install_dir}/inventory-growth"
+
   chown -R admin:admin "${install_dir}" 2>/dev/null || true
   touch "${install_dir}/aap_install.log" 2>/dev/null || true
 
@@ -613,10 +622,14 @@ run_execution_playbook() {
       inventory-growth
       -u
       admin
+      -c
+      ssh
       -e
       ansible_user=admin
       -e
-      ansible_become=true
+      ansible_become=false
+      -e
+      ansible_connection=ssh
       "ansible.containerized_installer.${playbook_name}"
     )
 
