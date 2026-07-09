@@ -653,11 +653,9 @@ get_inventory_var() {
 run_execution_playbook() {
   local playbook_name="$1"
   local install_dir
-  local runtime_ansible_cfg
   local runtime_host_line runtime_user runtime_become runtime_conn runtime_redis_mode
   local -a ansible_cmd
   install_dir="${DOWNLOAD_DIR}/${BUNDLE_DIR_NAME}"
-  runtime_ansible_cfg="${install_dir}/ansible.cfg"
 
   if ! id admin >/dev/null 2>&1; then
     err "admin user is required before running execution playbooks. Run step 5 first."
@@ -688,12 +686,6 @@ run_execution_playbook() {
 
   chown -R admin:admin "${install_dir}" 2>/dev/null || true
   touch "${install_dir}/aap_install.log" 2>/dev/null || true
-
-  cat > "${runtime_ansible_cfg}" <<'EOF'
-[defaults]
-deprecation_warnings=False
-EOF
-  chown admin:admin "${runtime_ansible_cfg}" 2>/dev/null || true
 
   log "Starting playbook execution: ansible.containerized_installer.${playbook_name}"
   (
@@ -729,12 +721,12 @@ EOF
     fi
 
     if command -v runuser >/dev/null 2>&1; then
-      runuser -u admin -- "${ansible_cmd[@]}"
+      runuser -u admin -- env ANSIBLE_DEPRECATION_WARNINGS=False "${ansible_cmd[@]}"
     elif command -v sudo >/dev/null 2>&1; then
-      HOME="${ADMIN_HOME}" sudo -u admin "${ansible_cmd[@]}"
+      HOME="${ADMIN_HOME}" sudo -u admin env ANSIBLE_DEPRECATION_WARNINGS=False "${ansible_cmd[@]}"
     else
       warn "Neither runuser nor sudo was found; running ansible-playbook as current user."
-      "${ansible_cmd[@]}"
+      env ANSIBLE_DEPRECATION_WARNINGS=False "${ansible_cmd[@]}"
     fi
   )
 }
