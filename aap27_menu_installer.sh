@@ -808,7 +808,7 @@ modify_inventory_growth() {
   upsert_inventory_var "${inv_file}" "registry_username" "${RHSM_USERNAME:-}"
   upsert_inventory_var "${inv_file}" "registry_password" "${RHSM_PASSWORD:-}"
   upsert_inventory_var "${inv_file}" "ansible_user" "${remote_user}"
-  upsert_inventory_var "${inv_file}" "ansible_become" "false"
+  upsert_inventory_var "${inv_file}" "ansible_become" "true"
   upsert_inventory_var "${inv_file}" "ansible_connection" "ssh"
   upsert_inventory_var "${inv_file}" "redis_mode" "standalone"
 
@@ -862,7 +862,7 @@ enforce_inventory_runtime_settings() {
   fi
 
   upsert_inventory_var "${inv_file}" "ansible_user" "${remote_user}"
-  upsert_inventory_var "${inv_file}" "ansible_become" "false"
+  upsert_inventory_var "${inv_file}" "ansible_become" "true"
   upsert_inventory_var "${inv_file}" "ansible_connection" "ssh"
   upsert_inventory_var "${inv_file}" "ansible_ssh_common_args" "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
   upsert_inventory_var "${inv_file}" "registry_username" "${RHSM_USERNAME:-}"
@@ -933,7 +933,7 @@ run_execution_playbook() {
       -e
       "ansible_user=${remote_user}"
       -e
-      ansible_become=false
+      ansible_become=true
       -e
       ansible_connection=ssh
       -e
