@@ -550,8 +550,8 @@ modify_inventory_growth() {
     save_env_kv "ADMIN_PASSWORD" "${admin_password}"
   fi
 
-  sed -E -i "s|aap\.example\.(com|org)|${target_fqdn}|g" "${inv_file}"
-  sed -E -i "s|(^|[^[:alnum:]_])example\.(com|org)([^[:alnum:]_]|$)|\\1${target_domain}\\3|g" "${inv_file}"
+  sed -E -i "s@aap\.example\.(com|org)@${target_fqdn}@g" "${inv_file}"
+  sed -E -i "s@(^|[^[:alnum:]_])example\.(com|org)([^[:alnum:]_]|$)@\\1${target_domain}\\3@g" "${inv_file}"
   sed -i "s|password=<set your own>|password={{ admin_password }}|g" "${inv_file}"
   sed -i "s|collections=false|collections=true|g" "${inv_file}"
 
@@ -588,8 +588,8 @@ enforce_inventory_runtime_settings() {
     target_domain="localdomain"
   fi
 
-  sed -E -i "s|aap\.example\.(com|org)|${target_fqdn}|g" "${inv_file}"
-  sed -E -i "s|(^|[^[:alnum:]_])example\.(com|org)([^[:alnum:]_]|$)|\\1${target_domain}\\3|g" "${inv_file}"
+  sed -E -i "s@aap\.example\.(com|org)@${target_fqdn}@g" "${inv_file}"
+  sed -E -i "s@(^|[^[:alnum:]_])example\.(com|org)([^[:alnum:]_]|$)@\\1${target_domain}\\3@g" "${inv_file}"
 
   upsert_inventory_var "${inv_file}" "ansible_user" "admin"
   upsert_inventory_var "${inv_file}" "ansible_become" "false"
