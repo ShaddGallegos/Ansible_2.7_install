@@ -43,6 +43,7 @@ save_env_kv() {
   local key="$1"
   local val="$2"
 
+  mkdir -p "$(dirname "${ENV_FILE}")"
   touch "${ENV_FILE}"
   chmod 600 "${ENV_FILE}"
 
@@ -479,13 +480,39 @@ download_bundle() {
   load_env
   ensure_registry_credentials
 
-  local bundle_url tmp_bundle file_type
-  local -a curl_args
+  local bundle_url tmp_bundle file_type sudo_user_home candidate
+  local -a curl_args local_candidates
   bundle_url="${BUNDLE_URL:-$BUNDLE_URL_DEFAULT}"
   tmp_bundle="${DOWNLOAD_DIR}/${BUNDLE_FILE}.tmp"
 
   mkdir -p "${DOWNLOAD_DIR}"
   chown admin:admin "${DOWNLOAD_DIR}"
+
+  # Prefer an existing local bundle in ~/Downloads before remote download.
+  local_candidates=(
+    "${DOWNLOAD_DIR}/${BUNDLE_FILE}"
+    "${ADMIN_HOME}/Downloads/${BUNDLE_FILE}"
+    "${HOME}/Downloads/${BUNDLE_FILE}"
+  )
+
+  if [[ -n "${SUDO_USER:-}" ]]; then
+    sudo_user_home="$(getent passwd "${SUDO_USER}" | cut -d: -f6 || true)"
+    if [[ -n "${sudo_user_home}" ]]; then
+      local_candidates+=("${sudo_user_home}/Downloads/${BUNDLE_FILE}")
+    fi
+  fi
+
+  for candidate in "${local_candidates[@]}"; do
+    [[ -f "${candidate}" ]] || continue
+    if tar -tzf "${candidate}" >/dev/null 2>&1 || tar -tf "${candidate}" >/dev/null 2>&1; then
+      if [[ "${candidate}" != "${DOWNLOAD_DIR}/${BUNDLE_FILE}" ]]; then
+        cp -f "${candidate}" "${DOWNLOAD_DIR}/${BUNDLE_FILE}"
+      fi
+      chown admin:admin "${DOWNLOAD_DIR}/${BUNDLE_FILE}" 2>/dev/null || true
+      ok "Using existing local bundle file: ${candidate}"
+      return 0
+    fi
+  done
 
   log "Downloading setup bundle to ${DOWNLOAD_DIR}/${BUNDLE_FILE}."
 
@@ -523,12 +550,28 @@ download_bundle() {
     mv -f "${tmp_bundle}" "${DOWNLOAD_DIR}/${BUNDLE_FILE}"
     chown admin:admin "${DOWNLOAD_DIR}/${BUNDLE_FILE}"
   else
+    local local_bundle_path
     file_type="$(file -b "${tmp_bundle}" 2>/dev/null || echo "unknown")"
     err "Downloaded file is not a valid tar archive."
     err "Detected file type: ${file_type}"
     warn "The URL likely returned a login/error page. Confirm Step 6 credentials and the BUNDLE_URL value."
     warn "First lines of downloaded content:"
     head -n 5 "${tmp_bundle}" 2>/dev/null | sed 's/^/  /' || true
+
+    read -r -p "Enter local path to a valid AAP bundle tar.gz (or press ENTER to abort): " local_bundle_path
+    if [[ -n "${local_bundle_path}" && -f "${local_bundle_path}" ]]; then
+      if tar -tzf "${local_bundle_path}" >/dev/null 2>&1 || tar -tf "${local_bundle_path}" >/dev/null 2>&1; then
+        cp -f "${local_bundle_path}" "${DOWNLOAD_DIR}/${BUNDLE_FILE}"
+        chown admin:admin "${DOWNLOAD_DIR}/${BUNDLE_FILE}" 2>/dev/null || true
+        rm -f "${tmp_bundle}" || true
+        ok "Using local bundle file: ${local_bundle_path}"
+        ok "Setup bundle download completed: ${BUNDLE_FILE}."
+        return 0
+      else
+        err "Provided local file is not a valid tar archive: ${local_bundle_path}"
+      fi
+    fi
+
     rm -f "${tmp_bundle}" || true
     return 1
   fi
@@ -603,19 +646,105 @@ ensure_registry_credentials() {
   fi
 }
 
+get_preferred_remote_user() {
+  local selected_user use_admin
+
+  load_env
+
+  if [[ -n "${AAP_REMOTE_USER:-}" ]]; then
+    printf '%s' "${AAP_REMOTE_USER}"
+    return
+  fi
+
+  if id admin >/dev/null 2>&1; then
+    selected_user="admin"
+  else
+    warn "admin user does not exist on this host."
+    read -r -p "Use admin as the AAP SSH user? [Y/n]: " use_admin
+    if [[ ! "${use_admin:-Y}" =~ ^[Nn]$ ]]; then
+      selected_user="admin"
+    else
+      read -r -p "Enter AAP SSH user [admin]: " selected_user
+      selected_user="${selected_user:-admin}"
+    fi
+
+    if ! id "${selected_user}" >/dev/null 2>&1; then
+      warn "Selected user '${selected_user}' does not currently exist. Create it or run Step 5 if you intend to use admin."
+    fi
+  fi
+
+  AAP_REMOTE_USER="${selected_user}"
+  save_env_kv "AAP_REMOTE_USER" "${AAP_REMOTE_USER}"
+  printf '%s' "${AAP_REMOTE_USER}"
+}
+
+get_user_home() {
+  local user_name="$1"
+  local user_home
+  user_home="$(getent passwd "${user_name}" | cut -d: -f6 || true)"
+  if [[ -z "${user_home}" ]]; then
+    user_home="/home/${user_name}"
+  fi
+  printf '%s' "${user_home}"
+}
+
+get_controller_user() {
+  local selected_user
+
+  load_env
+  if [[ -n "${AAP_CONTROLLER_USER:-}" ]]; then
+    printf '%s' "${AAP_CONTROLLER_USER}"
+    return
+  fi
+
+  if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]] && id "${SUDO_USER}" >/dev/null 2>&1; then
+    selected_user="${SUDO_USER}"
+  elif [[ -n "${USER:-}" && "${USER}" != "root" ]] && id "${USER}" >/dev/null 2>&1; then
+    selected_user="${USER}"
+  elif id admin >/dev/null 2>&1; then
+    selected_user="admin"
+  else
+    selected_user="root"
+  fi
+
+  AAP_CONTROLLER_USER="${selected_user}"
+  save_env_kv "AAP_CONTROLLER_USER" "${AAP_CONTROLLER_USER}"
+  printf '%s' "${AAP_CONTROLLER_USER}"
+}
+
+get_controller_ssh_key() {
+  local controller_user controller_home key_path
+
+  load_env
+  if [[ -n "${AAP_CONTROLLER_SSH_KEY:-}" ]]; then
+    printf '%s' "${AAP_CONTROLLER_SSH_KEY}"
+    return
+  fi
+
+  controller_user="$(get_controller_user)"
+  controller_home="$(get_user_home "${controller_user}")"
+  key_path="${controller_home}/.ssh/id_ed25519"
+
+  AAP_CONTROLLER_SSH_KEY="${key_path}"
+  save_env_kv "AAP_CONTROLLER_SSH_KEY" "${AAP_CONTROLLER_SSH_KEY}"
+  printf '%s' "${AAP_CONTROLLER_SSH_KEY}"
+}
+
 modify_inventory_growth() {
   load_env
   ensure_registry_credentials
 
-  local inv_file admin_password target_fqdn target_domain host_line
+  local inv_file admin_password target_fqdn target_domain host_line remote_user controller_key escaped_admin_password
   inv_file="${INVENTORY_FILE}"
   admin_password="${ADMIN_PASSWORD:-}"
+  remote_user="$(get_preferred_remote_user)"
+  controller_key="$(get_controller_ssh_key)"
   target_fqdn="$(hostname -f 2>/dev/null || echo aap.localdomain)"
   target_domain="${target_fqdn#*.}"
   if [[ "${target_domain}" == "${target_fqdn}" || -z "${target_domain}" ]]; then
     target_domain="localdomain"
   fi
-  host_line="${target_fqdn} ansible_host=${target_fqdn} real_hostname=${target_fqdn} ansible_user=admin ansible_ssh_private_key_file=/home/admin/.ssh/id_ed25519"
+  host_line="${target_fqdn} ansible_host=${target_fqdn} real_hostname=${target_fqdn} ansible_user=${remote_user} ansible_ssh_private_key_file=${controller_key}"
 
   if [[ ! -f "${inv_file}" ]]; then
     err "inventory-growth not found: ${inv_file}"
@@ -624,14 +753,17 @@ modify_inventory_growth() {
 
   if [[ -z "${admin_password}" ]]; then
     warn "ADMIN_PASSWORD not found in environment file; prompting now."
-    read_secret_prompt admin_password "Enter admin password for inventory values"
+    read_secret_prompt admin_password "Enter platform admin password for inventory values"
     save_env_kv "ADMIN_PASSWORD" "${admin_password}"
   fi
+
+  escaped_admin_password="$(printf '%s' "${admin_password}" | sed -e 's/[\\/&]/\\&/g')"
 
   sed -E -i "s@aap\.example\.(com|org)@${target_fqdn}@g" "${inv_file}"
   sed -E -i "s@(^|[^[:alnum:]_])example\.(com|org)([^[:alnum:]_]|$)@\\1${target_domain}\\3@g" "${inv_file}"
   sed -i "s|password=<set your own>|password={{ admin_password }}|g" "${inv_file}"
   sed -i "s|collections=false|collections=true|g" "${inv_file}"
+  sed -E -i "s@\{\{[[:space:]]*admin_password[[:space:]]*\}\}@${escaped_admin_password}@g" "${inv_file}"
 
   # Normalize all inventory host lines so reruns cannot keep stale aliases/domains.
   awk -v normalized_host_line="${host_line}" '
@@ -651,7 +783,7 @@ modify_inventory_growth() {
   upsert_inventory_var "${inv_file}" "pg_admin_password" "${admin_password}"
   upsert_inventory_var "${inv_file}" "registry_username" "${RHSM_USERNAME:-}"
   upsert_inventory_var "${inv_file}" "registry_password" "${RHSM_PASSWORD:-}"
-  upsert_inventory_var "${inv_file}" "ansible_user" "admin"
+  upsert_inventory_var "${inv_file}" "ansible_user" "${remote_user}"
   upsert_inventory_var "${inv_file}" "ansible_become" "false"
   upsert_inventory_var "${inv_file}" "ansible_connection" "ssh"
   upsert_inventory_var "${inv_file}" "redis_mode" "standalone"
@@ -661,18 +793,30 @@ modify_inventory_growth() {
 
 enforce_inventory_runtime_settings() {
   local inv_file="$1"
-  local target_fqdn target_domain host_line
-  local known_hosts_file="${ADMIN_HOME}/.ssh/known_hosts"
+  local target_fqdn target_domain host_line remote_user controller_user controller_home controller_key known_hosts_file escaped_admin_password
   ensure_registry_credentials
+  load_env
+  remote_user="$(get_preferred_remote_user)"
+  controller_user="$(get_controller_user)"
+  controller_home="$(get_user_home "${controller_user}")"
+  controller_key="$(get_controller_ssh_key)"
+  known_hosts_file="${controller_home}/.ssh/known_hosts"
   target_fqdn="$(hostname -f 2>/dev/null || echo aap.localdomain)"
   target_domain="${target_fqdn#*.}"
   if [[ "${target_domain}" == "${target_fqdn}" || -z "${target_domain}" ]]; then
     target_domain="localdomain"
   fi
-  host_line="${target_fqdn} ansible_host=${target_fqdn} real_hostname=${target_fqdn} ansible_user=admin ansible_ssh_private_key_file=/home/admin/.ssh/id_ed25519"
+  host_line="${target_fqdn} ansible_host=${target_fqdn} real_hostname=${target_fqdn} ansible_user=${remote_user} ansible_ssh_private_key_file=${controller_key}"
+
+  if [[ -z "${ADMIN_PASSWORD:-}" ]]; then
+    read_secret_prompt ADMIN_PASSWORD "Enter platform admin password for runtime inventory values"
+    save_env_kv "ADMIN_PASSWORD" "${ADMIN_PASSWORD}"
+  fi
+  escaped_admin_password="$(printf '%s' "${ADMIN_PASSWORD}" | sed -e 's/[\\/&]/\\&/g')"
 
   sed -E -i "s@aap\.example\.(com|org)@${target_fqdn}@g" "${inv_file}"
   sed -E -i "s@(^|[^[:alnum:]_])example\.(com|org)([^[:alnum:]_]|$)@\\1${target_domain}\\3@g" "${inv_file}"
+  sed -E -i "s@\{\{[[:space:]]*admin_password[[:space:]]*\}\}@${escaped_admin_password}@g" "${inv_file}"
 
   awk -v normalized_host_line="${host_line}" '
     /^[[:space:]]*#/ || /^[[:space:]]*$/ { print; next }
@@ -682,18 +826,18 @@ enforce_inventory_runtime_settings() {
     { print }
   ' "${inv_file}" > "${inv_file}.tmp" && mv "${inv_file}.tmp" "${inv_file}"
 
-  if command -v runuser >/dev/null 2>&1; then
-    runuser -u admin -- ssh-keygen -R aap >/dev/null 2>&1 || true
-    runuser -u admin -- ssh-keygen -R "${target_fqdn}" >/dev/null 2>&1 || true
-  elif command -v sudo >/dev/null 2>&1; then
-    HOME="${ADMIN_HOME}" sudo -u admin ssh-keygen -R aap >/dev/null 2>&1 || true
-    HOME="${ADMIN_HOME}" sudo -u admin ssh-keygen -R "${target_fqdn}" >/dev/null 2>&1 || true
+  if command -v runuser >/dev/null 2>&1 && id "${controller_user}" >/dev/null 2>&1; then
+    runuser -u "${controller_user}" -- ssh-keygen -R aap >/dev/null 2>&1 || true
+    runuser -u "${controller_user}" -- ssh-keygen -R "${target_fqdn}" >/dev/null 2>&1 || true
+  elif command -v sudo >/dev/null 2>&1 && id "${controller_user}" >/dev/null 2>&1; then
+    HOME="${controller_home}" sudo -u "${controller_user}" ssh-keygen -R aap >/dev/null 2>&1 || true
+    HOME="${controller_home}" sudo -u "${controller_user}" ssh-keygen -R "${target_fqdn}" >/dev/null 2>&1 || true
   else
     ssh-keygen -f "${known_hosts_file}" -R aap >/dev/null 2>&1 || true
     ssh-keygen -f "${known_hosts_file}" -R "${target_fqdn}" >/dev/null 2>&1 || true
   fi
 
-  upsert_inventory_var "${inv_file}" "ansible_user" "admin"
+  upsert_inventory_var "${inv_file}" "ansible_user" "${remote_user}"
   upsert_inventory_var "${inv_file}" "ansible_become" "false"
   upsert_inventory_var "${inv_file}" "ansible_connection" "ssh"
   upsert_inventory_var "${inv_file}" "ansible_ssh_common_args" "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
@@ -716,14 +860,13 @@ get_inventory_var() {
 run_execution_playbook() {
   local playbook_name="$1"
   local install_dir
-  local runtime_host_line runtime_user runtime_become runtime_conn runtime_redis_mode
+  local runtime_host_line runtime_user runtime_become runtime_conn runtime_redis_mode remote_user controller_user controller_home controller_key
   local -a ansible_cmd
   install_dir="${DOWNLOAD_DIR}/${BUNDLE_DIR_NAME}"
-
-  if ! id admin >/dev/null 2>&1; then
-    err "admin user is required before running execution playbooks. Run step 5 first."
-    return 1
-  fi
+  remote_user="$(get_preferred_remote_user)"
+  controller_user="$(get_controller_user)"
+  controller_home="$(get_user_home "${controller_user}")"
+  controller_key="$(get_controller_ssh_key)"
 
   if [[ ! -d "${install_dir}" ]]; then
     err "Installation directory missing: ${install_dir}"
@@ -747,7 +890,9 @@ run_execution_playbook() {
   log "INFO" "Runtime inventory vars: ansible_connection=${runtime_conn:-unset}, ansible_user=${runtime_user:-unset}, ansible_become=${runtime_become:-unset}"
   log "INFO" "Runtime inventory redis_mode=${runtime_redis_mode:-unset}"
 
-  chown -R admin:admin "${install_dir}" 2>/dev/null || true
+  if id "${controller_user}" >/dev/null 2>&1; then
+    chown -R "${controller_user}:${controller_user}" "${install_dir}" 2>/dev/null || true
+  fi
   touch "${install_dir}/aap_install.log" 2>/dev/null || true
 
   log "Starting playbook execution: ansible.containerized_installer.${playbook_name}"
@@ -758,11 +903,11 @@ run_execution_playbook() {
       -i
       inventory-growth
       -u
-      admin
+      "${remote_user}"
       -c
       ssh
       -e
-      ansible_user=admin
+      "ansible_user=${remote_user}"
       -e
       ansible_become=false
       -e
@@ -778,15 +923,17 @@ run_execution_playbook() {
       "ansible.containerized_installer.${playbook_name}"
     )
 
-    if [[ -f "${ADMIN_HOME}/.ssh/id_ed25519" ]]; then
-      ansible_cmd+=(--private-key "${ADMIN_HOME}/.ssh/id_ed25519")
-      ansible_cmd+=(-e "ansible_ssh_private_key_file=${ADMIN_HOME}/.ssh/id_ed25519")
+    if [[ -f "${controller_key}" ]]; then
+      ansible_cmd+=(--private-key "${controller_key}")
+      ansible_cmd+=(-e "ansible_ssh_private_key_file=${controller_key}")
+    else
+      warn "Controller SSH key not found: ${controller_key}. SSH may fail unless agent/password auth is configured."
     fi
 
-    if command -v runuser >/dev/null 2>&1; then
-      runuser -u admin -- env ANSIBLE_DEPRECATION_WARNINGS=False "${ansible_cmd[@]}"
-    elif command -v sudo >/dev/null 2>&1; then
-      HOME="${ADMIN_HOME}" sudo -u admin env ANSIBLE_DEPRECATION_WARNINGS=False "${ansible_cmd[@]}"
+    if command -v runuser >/dev/null 2>&1 && id "${controller_user}" >/dev/null 2>&1; then
+      runuser -u "${controller_user}" -- env ANSIBLE_DEPRECATION_WARNINGS=False "${ansible_cmd[@]}"
+    elif command -v sudo >/dev/null 2>&1 && id "${controller_user}" >/dev/null 2>&1; then
+      HOME="${controller_home}" sudo -u "${controller_user}" env ANSIBLE_DEPRECATION_WARNINGS=False "${ansible_cmd[@]}"
     else
       warn "Neither runuser nor sudo was found; running ansible-playbook as current user."
       env ANSIBLE_DEPRECATION_WARNINGS=False "${ansible_cmd[@]}"
