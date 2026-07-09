@@ -548,6 +548,26 @@ modify_inventory_growth() {
   sed -i "s|password=<set your own>|password={{ admin_password }}|g" "${inv_file}"
   sed -i "s|collections=false|collections=true|g" "${inv_file}"
 
+  # Normalize the first host line so reruns cannot keep a root ansible_user.
+  awk '
+    /^[[:space:]]*#/ || /^\[/ || /^[[:space:]]*$/ { print; next }
+    host_done == 0 {
+      line = $0
+      gsub(/ansible_user=[^[:space:]]+/, "ansible_user=admin", line)
+      gsub(/ansible_ssh_private_key_file=[^[:space:]]+/, "ansible_ssh_private_key_file=/home/admin/.ssh/id_ed25519", line)
+      if (line !~ /ansible_user=/) {
+        line = line " ansible_user=admin"
+      }
+      if (line !~ /ansible_ssh_private_key_file=/) {
+        line = line " ansible_ssh_private_key_file=/home/admin/.ssh/id_ed25519"
+      }
+      print line
+      host_done = 1
+      next
+    }
+    { print }
+  ' "${inv_file}" > "${inv_file}.tmp" && mv "${inv_file}.tmp" "${inv_file}"
+
   ensure_all_vars_section "${inv_file}"
 
   upsert_inventory_var "${inv_file}" "admin_password" "${admin_password}"
@@ -581,6 +601,9 @@ run_execution_playbook() {
     return 1
   fi
 
+  chown -R admin:admin "${install_dir}" 2>/dev/null || true
+  touch "${install_dir}/aap_install.log" 2>/dev/null || true
+
   log "Starting playbook execution: ansible.containerized_installer.${playbook_name}"
   (
     cd "${install_dir}"
@@ -590,11 +613,16 @@ run_execution_playbook() {
       inventory-growth
       -u
       admin
+      -e
+      ansible_user=admin
+      -e
+      ansible_become=true
       "ansible.containerized_installer.${playbook_name}"
     )
 
     if [[ -f "${ADMIN_HOME}/.ssh/id_ed25519" ]]; then
       ansible_cmd+=(--private-key "${ADMIN_HOME}/.ssh/id_ed25519")
+      ansible_cmd+=(-e "ansible_ssh_private_key_file=${ADMIN_HOME}/.ssh/id_ed25519")
     fi
 
     if command -v runuser >/dev/null 2>&1; then
