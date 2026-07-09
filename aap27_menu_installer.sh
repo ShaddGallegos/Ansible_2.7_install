@@ -492,13 +492,31 @@ download_bundle() {
 }
 
 extract_bundle() {
+  local bundle_path file_type
+  bundle_path="${DOWNLOAD_DIR}/${BUNDLE_FILE}"
+
   if [[ ! -f "${DOWNLOAD_DIR}/${BUNDLE_FILE}" ]]; then
     err "Setup bundle not found: ${DOWNLOAD_DIR}/${BUNDLE_FILE}"
     return 1
   fi
 
   log "Extracting ${BUNDLE_FILE} in ${DOWNLOAD_DIR}."
-  tar -xzf "${DOWNLOAD_DIR}/${BUNDLE_FILE}" -C "${DOWNLOAD_DIR}"
+
+  if tar -tzf "${bundle_path}" >/dev/null 2>&1; then
+    tar -xzf "${bundle_path}" -C "${DOWNLOAD_DIR}"
+  elif tar -tf "${bundle_path}" >/dev/null 2>&1; then
+    tar -xf "${bundle_path}" -C "${DOWNLOAD_DIR}"
+  else
+    file_type="$(file -b "${bundle_path}" 2>/dev/null || echo "unknown")"
+    err "Downloaded file is not a valid tar archive: ${bundle_path}"
+    err "Detected file type: ${file_type}"
+    warn "This usually means the download URL returned an HTML/login/error page instead of the bundle."
+    warn "Re-run Step 6 to refresh credentials/tokens, then Step 7 to re-download the bundle."
+    warn "First lines of the file for quick diagnosis:"
+    head -n 5 "${bundle_path}" 2>/dev/null | sed 's/^/  /' || true
+    return 1
+  fi
+
   chown -R admin:admin "${DOWNLOAD_DIR}/${BUNDLE_DIR_NAME}" || true
   ok "Bundle extracted to ${DOWNLOAD_DIR}/${BUNDLE_DIR_NAME}."
 }
