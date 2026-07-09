@@ -32,10 +32,10 @@
         msg: "inventory-growth not found at {{ inventory_file }}"
       when: not inv_stat.stat.exists
 
-    - name: Replace aap.example.com globally
+    - name: Replace example hostnames globally
       ansible.builtin.replace:
         path: "{{ inventory_file }}"
-        regexp: 'aap\.example\.com'
+        regexp: 'aap\.example\.(com|org)'
         replace: 'aap ansible_host={{ ansible_default_ipv4.address }} real_hostname={{ ansible_hostname }} ansible_user=admin ansible_ssh_private_key_file=/home/admin/.ssh/id_ed25519'
 
     - name: Replace installer password placeholder

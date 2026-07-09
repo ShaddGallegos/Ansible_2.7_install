@@ -529,10 +529,14 @@ upsert_inventory_var() {
 modify_inventory_growth() {
   load_env
 
-  local inv_file admin_password target_fqdn host_line
+  local inv_file admin_password target_fqdn target_domain host_line
   inv_file="${INVENTORY_FILE}"
   admin_password="${ADMIN_PASSWORD:-}"
   target_fqdn="$(hostname -f 2>/dev/null || echo aap.localdomain)"
+  target_domain="${target_fqdn#*.}"
+  if [[ "${target_domain}" == "${target_fqdn}" || -z "${target_domain}" ]]; then
+    target_domain="localdomain"
+  fi
   host_line="aap ansible_host={{ ansible_ip_address }} real_hostname=${target_fqdn} ansible_user=admin ansible_ssh_private_key_file=/home/admin/.ssh/id_ed25519"
 
   if [[ ! -f "${inv_file}" ]]; then
@@ -546,8 +550,8 @@ modify_inventory_growth() {
     save_env_kv "ADMIN_PASSWORD" "${admin_password}"
   fi
 
-  sed -E -i "s|aap\.example\.[A-Za-z0-9.-]+|${target_fqdn}|g" "${inv_file}"
-  sed -i "s|aap.example.com|${target_fqdn}|g" "${inv_file}"
+  sed -E -i "s|aap\.example\.(com|org)|${target_fqdn}|g" "${inv_file}"
+  sed -E -i "s|(^|[^[:alnum:]_])example\.(com|org)([^[:alnum:]_]|$)|\\1${target_domain}\\3|g" "${inv_file}"
   sed -i "s|password=<set your own>|password={{ admin_password }}|g" "${inv_file}"
   sed -i "s|collections=false|collections=true|g" "${inv_file}"
 
@@ -577,19 +581,36 @@ modify_inventory_growth() {
 
 enforce_inventory_runtime_settings() {
   local inv_file="$1"
-  local target_fqdn
+  local target_fqdn target_domain
   target_fqdn="$(hostname -f 2>/dev/null || echo aap.localdomain)"
+  target_domain="${target_fqdn#*.}"
+  if [[ "${target_domain}" == "${target_fqdn}" || -z "${target_domain}" ]]; then
+    target_domain="localdomain"
+  fi
 
-  sed -E -i "s|aap\.example\.[A-Za-z0-9.-]+|${target_fqdn}|g" "${inv_file}"
+  sed -E -i "s|aap\.example\.(com|org)|${target_fqdn}|g" "${inv_file}"
+  sed -E -i "s|(^|[^[:alnum:]_])example\.(com|org)([^[:alnum:]_]|$)|\\1${target_domain}\\3|g" "${inv_file}"
 
   upsert_inventory_var "${inv_file}" "ansible_user" "admin"
   upsert_inventory_var "${inv_file}" "ansible_become" "false"
   upsert_inventory_var "${inv_file}" "ansible_connection" "ssh"
 }
 
+get_inventory_var() {
+  local inv_file="$1"
+  local key="$2"
+  local raw
+
+  raw="$(grep -E "^${key}=" "${inv_file}" | tail -n1 | cut -d= -f2- || true)"
+  raw="${raw%\'}"
+  raw="${raw#\'}"
+  printf '%s' "${raw}"
+}
+
 run_execution_playbook() {
   local playbook_name="$1"
   local install_dir
+  local runtime_host_line runtime_user runtime_become runtime_conn
   local -a ansible_cmd
   install_dir="${DOWNLOAD_DIR}/${BUNDLE_DIR_NAME}"
 
@@ -609,6 +630,14 @@ run_execution_playbook() {
   fi
 
   enforce_inventory_runtime_settings "${install_dir}/inventory-growth"
+
+  runtime_host_line="$(awk '/^[[:space:]]*#/ || /^\[/ || /^[[:space:]]*$/ { next } { print; exit }' "${install_dir}/inventory-growth")"
+  runtime_user="$(get_inventory_var "${install_dir}/inventory-growth" "ansible_user")"
+  runtime_become="$(get_inventory_var "${install_dir}/inventory-growth" "ansible_become")"
+  runtime_conn="$(get_inventory_var "${install_dir}/inventory-growth" "ansible_connection")"
+
+  log "INFO" "Runtime inventory host line: ${runtime_host_line:-<not-found>}"
+  log "INFO" "Runtime inventory vars: ansible_connection=${runtime_conn:-unset}, ansible_user=${runtime_user:-unset}, ansible_become=${runtime_become:-unset}"
 
   chown -R admin:admin "${install_dir}" 2>/dev/null || true
   touch "${install_dir}/aap_install.log" 2>/dev/null || true
