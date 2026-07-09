@@ -552,7 +552,7 @@ modify_inventory_growth() {
   if [[ "${target_domain}" == "${target_fqdn}" || -z "${target_domain}" ]]; then
     target_domain="localdomain"
   fi
-  host_line="aap ansible_host=${target_fqdn} real_hostname=${target_fqdn} ansible_user=admin ansible_ssh_private_key_file=/home/admin/.ssh/id_ed25519"
+  host_line="${target_fqdn} ansible_host=${target_fqdn} real_hostname=${target_fqdn} ansible_user=admin ansible_ssh_private_key_file=/home/admin/.ssh/id_ed25519"
 
   if [[ ! -f "${inv_file}" ]]; then
     err "inventory-growth not found: ${inv_file}"
@@ -570,12 +570,13 @@ modify_inventory_growth() {
   sed -i "s|password=<set your own>|password={{ admin_password }}|g" "${inv_file}"
   sed -i "s|collections=false|collections=true|g" "${inv_file}"
 
-  # Normalize the first host line so reruns cannot keep stale host/domain or root ansible_user.
+  # Normalize all inventory host lines so reruns cannot keep stale aliases/domains.
   awk -v normalized_host_line="${host_line}" '
-    /^[[:space:]]*#/ || /^\[/ || /^[[:space:]]*$/ { print; next }
-    host_done == 0 {
+    /^[[:space:]]*#/ || /^[[:space:]]*$/ { print; next }
+    /^\[all:vars\]/ { in_all_vars = 1; print; next }
+    /^\[/ { in_all_vars = 0; print; next }
+    in_all_vars == 0 {
       print normalized_host_line
-      host_done = 1
       next
     }
     { print }
@@ -597,20 +598,42 @@ modify_inventory_growth() {
 
 enforce_inventory_runtime_settings() {
   local inv_file="$1"
-  local target_fqdn target_domain
+  local target_fqdn target_domain host_line
+  local known_hosts_file="${ADMIN_HOME}/.ssh/known_hosts"
   ensure_registry_credentials
   target_fqdn="$(hostname -f 2>/dev/null || echo aap.localdomain)"
   target_domain="${target_fqdn#*.}"
   if [[ "${target_domain}" == "${target_fqdn}" || -z "${target_domain}" ]]; then
     target_domain="localdomain"
   fi
+  host_line="${target_fqdn} ansible_host=${target_fqdn} real_hostname=${target_fqdn} ansible_user=admin ansible_ssh_private_key_file=/home/admin/.ssh/id_ed25519"
 
   sed -E -i "s@aap\.example\.(com|org)@${target_fqdn}@g" "${inv_file}"
   sed -E -i "s@(^|[^[:alnum:]_])example\.(com|org)([^[:alnum:]_]|$)@\\1${target_domain}\\3@g" "${inv_file}"
 
+  awk -v normalized_host_line="${host_line}" '
+    /^[[:space:]]*#/ || /^[[:space:]]*$/ { print; next }
+    /^\[all:vars\]/ { in_all_vars = 1; print; next }
+    /^\[/ { in_all_vars = 0; print; next }
+    in_all_vars == 0 { print normalized_host_line; next }
+    { print }
+  ' "${inv_file}" > "${inv_file}.tmp" && mv "${inv_file}.tmp" "${inv_file}"
+
+  if command -v runuser >/dev/null 2>&1; then
+    runuser -u admin -- ssh-keygen -R aap >/dev/null 2>&1 || true
+    runuser -u admin -- ssh-keygen -R "${target_fqdn}" >/dev/null 2>&1 || true
+  elif command -v sudo >/dev/null 2>&1; then
+    HOME="${ADMIN_HOME}" sudo -u admin ssh-keygen -R aap >/dev/null 2>&1 || true
+    HOME="${ADMIN_HOME}" sudo -u admin ssh-keygen -R "${target_fqdn}" >/dev/null 2>&1 || true
+  else
+    ssh-keygen -f "${known_hosts_file}" -R aap >/dev/null 2>&1 || true
+    ssh-keygen -f "${known_hosts_file}" -R "${target_fqdn}" >/dev/null 2>&1 || true
+  fi
+
   upsert_inventory_var "${inv_file}" "ansible_user" "admin"
   upsert_inventory_var "${inv_file}" "ansible_become" "false"
   upsert_inventory_var "${inv_file}" "ansible_connection" "ssh"
+  upsert_inventory_var "${inv_file}" "ansible_ssh_common_args" "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
   upsert_inventory_var "${inv_file}" "registry_username" "${RHSM_USERNAME:-}"
   upsert_inventory_var "${inv_file}" "registry_password" "${RHSM_PASSWORD:-}"
   upsert_inventory_var "${inv_file}" "redis_mode" "standalone"
@@ -630,9 +653,11 @@ get_inventory_var() {
 run_execution_playbook() {
   local playbook_name="$1"
   local install_dir
+  local runtime_ansible_cfg
   local runtime_host_line runtime_user runtime_become runtime_conn runtime_redis_mode
   local -a ansible_cmd
   install_dir="${DOWNLOAD_DIR}/${BUNDLE_DIR_NAME}"
+  runtime_ansible_cfg="${install_dir}/ansible.cfg"
 
   if ! id admin >/dev/null 2>&1; then
     err "admin user is required before running execution playbooks. Run step 5 first."
@@ -664,6 +689,12 @@ run_execution_playbook() {
   chown -R admin:admin "${install_dir}" 2>/dev/null || true
   touch "${install_dir}/aap_install.log" 2>/dev/null || true
 
+  cat > "${runtime_ansible_cfg}" <<'EOF'
+[defaults]
+deprecation_warnings=False
+EOF
+  chown admin:admin "${runtime_ansible_cfg}" 2>/dev/null || true
+
   log "Starting playbook execution: ansible.containerized_installer.${playbook_name}"
   (
     cd "${install_dir}"
@@ -681,6 +712,8 @@ run_execution_playbook() {
       ansible_become=false
       -e
       ansible_connection=ssh
+      -e
+      "ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
       -e
       redis_mode=standalone
       -e
