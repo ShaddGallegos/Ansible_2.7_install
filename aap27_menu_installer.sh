@@ -590,6 +590,7 @@ modify_inventory_growth() {
   upsert_inventory_var "${inv_file}" "ansible_user" "admin"
   upsert_inventory_var "${inv_file}" "ansible_become" "false"
   upsert_inventory_var "${inv_file}" "ansible_connection" "ssh"
+  upsert_inventory_var "${inv_file}" "redis_mode" "standalone"
 
   ok "inventory-growth updated successfully: ${inv_file}"
 }
@@ -612,6 +613,7 @@ enforce_inventory_runtime_settings() {
   upsert_inventory_var "${inv_file}" "ansible_connection" "ssh"
   upsert_inventory_var "${inv_file}" "registry_username" "${RHSM_USERNAME:-}"
   upsert_inventory_var "${inv_file}" "registry_password" "${RHSM_PASSWORD:-}"
+  upsert_inventory_var "${inv_file}" "redis_mode" "standalone"
 }
 
 get_inventory_var() {
@@ -628,7 +630,7 @@ get_inventory_var() {
 run_execution_playbook() {
   local playbook_name="$1"
   local install_dir
-  local runtime_host_line runtime_user runtime_become runtime_conn
+  local runtime_host_line runtime_user runtime_become runtime_conn runtime_redis_mode
   local -a ansible_cmd
   install_dir="${DOWNLOAD_DIR}/${BUNDLE_DIR_NAME}"
 
@@ -653,9 +655,11 @@ run_execution_playbook() {
   runtime_user="$(get_inventory_var "${install_dir}/inventory-growth" "ansible_user")"
   runtime_become="$(get_inventory_var "${install_dir}/inventory-growth" "ansible_become")"
   runtime_conn="$(get_inventory_var "${install_dir}/inventory-growth" "ansible_connection")"
+  runtime_redis_mode="$(get_inventory_var "${install_dir}/inventory-growth" "redis_mode")"
 
   log "INFO" "Runtime inventory host line: ${runtime_host_line:-<not-found>}"
   log "INFO" "Runtime inventory vars: ansible_connection=${runtime_conn:-unset}, ansible_user=${runtime_user:-unset}, ansible_become=${runtime_become:-unset}"
+  log "INFO" "Runtime inventory redis_mode=${runtime_redis_mode:-unset}"
 
   chown -R admin:admin "${install_dir}" 2>/dev/null || true
   touch "${install_dir}/aap_install.log" 2>/dev/null || true
