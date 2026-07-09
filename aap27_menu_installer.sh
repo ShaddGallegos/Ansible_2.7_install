@@ -477,16 +477,61 @@ EOF
 
 download_bundle() {
   load_env
+  ensure_registry_credentials
 
-  local bundle_url
+  local bundle_url tmp_bundle file_type
+  local -a curl_args
   bundle_url="${BUNDLE_URL:-$BUNDLE_URL_DEFAULT}"
+  tmp_bundle="${DOWNLOAD_DIR}/${BUNDLE_FILE}.tmp"
 
   mkdir -p "${DOWNLOAD_DIR}"
   chown admin:admin "${DOWNLOAD_DIR}"
 
   log "Downloading setup bundle to ${DOWNLOAD_DIR}/${BUNDLE_FILE}."
-  curl -L --fail -o "${DOWNLOAD_DIR}/${BUNDLE_FILE}" "${bundle_url}"
-  chown admin:admin "${DOWNLOAD_DIR}/${BUNDLE_FILE}"
+
+  curl_args=(
+    -L
+    --fail
+    --retry
+    3
+    --retry-delay
+    2
+    --connect-timeout
+    20
+    -o
+    "${tmp_bundle}"
+    "${bundle_url}"
+  )
+
+  # Prefer authenticated fetch to avoid CDN login redirects being saved as HTML.
+  if [[ -n "${RHSM_USERNAME:-}" && -n "${RHSM_PASSWORD:-}" ]]; then
+    curl_args+=(--user "${RHSM_USERNAME}:${RHSM_PASSWORD}")
+  fi
+
+  if [[ -n "${RH_OFFLINE_TOKEN:-}" ]]; then
+    curl_args+=(-H "Authorization: Bearer ${RH_OFFLINE_TOKEN}")
+  fi
+
+  if ! curl "${curl_args[@]}"; then
+    rm -f "${tmp_bundle}" || true
+    err "Bundle download failed. Verify RHSM credentials/token and BUNDLE_URL."
+    return 1
+  fi
+
+  # Validate payload before replacing the target bundle file.
+  if tar -tzf "${tmp_bundle}" >/dev/null 2>&1 || tar -tf "${tmp_bundle}" >/dev/null 2>&1; then
+    mv -f "${tmp_bundle}" "${DOWNLOAD_DIR}/${BUNDLE_FILE}"
+    chown admin:admin "${DOWNLOAD_DIR}/${BUNDLE_FILE}"
+  else
+    file_type="$(file -b "${tmp_bundle}" 2>/dev/null || echo "unknown")"
+    err "Downloaded file is not a valid tar archive."
+    err "Detected file type: ${file_type}"
+    warn "The URL likely returned a login/error page. Confirm Step 6 credentials and the BUNDLE_URL value."
+    warn "First lines of downloaded content:"
+    head -n 5 "${tmp_bundle}" 2>/dev/null | sed 's/^/  /' || true
+    rm -f "${tmp_bundle}" || true
+    return 1
+  fi
 
   ok "Setup bundle download completed: ${BUNDLE_FILE}."
 }
