@@ -671,29 +671,61 @@ ensure_registry_credentials() {
 }
 
 get_preferred_remote_user() {
-  local selected_user use_admin
+  local selected_user use_admin selected_uid
 
   load_env
 
   if [[ -n "${AAP_REMOTE_USER:-}" ]]; then
-    printf '%s' "${AAP_REMOTE_USER}"
-    return
+    if id "${AAP_REMOTE_USER}" >/dev/null 2>&1; then
+      selected_uid="$(id -u "${AAP_REMOTE_USER}" 2>/dev/null || echo 0)"
+      if [[ "${selected_uid}" != "0" ]]; then
+        printf '%s' "${AAP_REMOTE_USER}"
+        return
+      fi
+      warn "AAP_REMOTE_USER='${AAP_REMOTE_USER}' resolves to root; a non-root user is required by preflight." >&2
+    else
+      warn "AAP_REMOTE_USER='${AAP_REMOTE_USER}' does not exist on this host; a valid non-root user is required." >&2
+    fi
   fi
 
   if id admin >/dev/null 2>&1; then
     selected_user="admin"
   else
-    warn "admin user does not exist on this host."
-    read -r -p "Use admin as the AAP SSH user? [Y/n]: " use_admin
-    if [[ ! "${use_admin:-Y}" =~ ^[Nn]$ ]]; then
-      selected_user="admin"
-    else
-      read -r -p "Enter AAP SSH user [admin]: " selected_user
-      selected_user="${selected_user:-admin}"
+    warn "admin user does not exist on this host." >&2
+    if [[ ! -t 0 ]]; then
+      err "Cannot prompt for AAP remote user in non-interactive mode. Set AAP_REMOTE_USER to an existing non-root user in ${ENV_FILE}." >&2
+      return 1
     fi
 
-    if ! id "${selected_user}" >/dev/null 2>&1; then
-      warn "Selected user '${selected_user}' does not currently exist. Create it or run Step 5 if you intend to use admin."
+    while true; do
+      read -r -p "Use admin as the AAP SSH user? [Y/n]: " use_admin
+      if [[ ! "${use_admin:-Y}" =~ ^[Nn]$ ]]; then
+        selected_user="admin"
+      else
+        read -r -p "Enter AAP SSH user [admin]: " selected_user
+        selected_user="${selected_user:-admin}"
+      fi
+
+      if ! id "${selected_user}" >/dev/null 2>&1; then
+        warn "Selected user '${selected_user}' does not exist. Choose an existing non-root user." >&2
+        continue
+      fi
+
+      selected_uid="$(id -u "${selected_user}" 2>/dev/null || echo 0)"
+      if [[ "${selected_uid}" == "0" ]]; then
+        warn "Selected user '${selected_user}' is root; choose a non-root user (AAP preflight requirement)." >&2
+        continue
+      fi
+
+      break
+    done
+  fi
+
+  if id "${selected_user}" >/dev/null 2>&1; then
+    selected_uid="$(id -u "${selected_user}" 2>/dev/null || echo 0)"
+    if [[ "${selected_uid}" == "0" ]]; then
+      err "Remote user '${selected_user}' is root; preflight requires non-root SSH user." >&2
+      return 1
     fi
   fi
 
