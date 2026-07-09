@@ -477,21 +477,26 @@ EOF
 }
 
 download_bundle() {
+  local retry_depth="${1:-0}"
   load_env
   ensure_registry_credentials
 
-  local bundle_url tmp_bundle file_type sudo_user_home candidate
+  local bundle_url tmp_bundle file_type sudo_user_home candidate controller_user controller_home retry_creds
   local -a curl_args local_candidates
   bundle_url="${BUNDLE_URL:-$BUNDLE_URL_DEFAULT}"
   tmp_bundle="${DOWNLOAD_DIR}/${BUNDLE_FILE}.tmp"
+  controller_user="$(get_controller_user)"
+  controller_home="$(get_user_home "${controller_user}")"
 
   mkdir -p "${DOWNLOAD_DIR}"
-  chown admin:admin "${DOWNLOAD_DIR}"
+  if id "${controller_user}" >/dev/null 2>&1; then
+    chown "${controller_user}:${controller_user}" "${DOWNLOAD_DIR}" 2>/dev/null || true
+  fi
 
   # Prefer an existing local bundle in ~/Downloads before remote download.
   local_candidates=(
     "${DOWNLOAD_DIR}/${BUNDLE_FILE}"
-    "${ADMIN_HOME}/Downloads/${BUNDLE_FILE}"
+    "${controller_home}/Downloads/${BUNDLE_FILE}"
     "${HOME}/Downloads/${BUNDLE_FILE}"
   )
 
@@ -508,7 +513,9 @@ download_bundle() {
       if [[ "${candidate}" != "${DOWNLOAD_DIR}/${BUNDLE_FILE}" ]]; then
         cp -f "${candidate}" "${DOWNLOAD_DIR}/${BUNDLE_FILE}"
       fi
-      chown admin:admin "${DOWNLOAD_DIR}/${BUNDLE_FILE}" 2>/dev/null || true
+      if id "${controller_user}" >/dev/null 2>&1; then
+        chown "${controller_user}:${controller_user}" "${DOWNLOAD_DIR}/${BUNDLE_FILE}" 2>/dev/null || true
+      fi
       ok "Using existing local bundle file: ${candidate}"
       return 0
     fi
@@ -548,7 +555,9 @@ download_bundle() {
   # Validate payload before replacing the target bundle file.
   if tar -tzf "${tmp_bundle}" >/dev/null 2>&1 || tar -tf "${tmp_bundle}" >/dev/null 2>&1; then
     mv -f "${tmp_bundle}" "${DOWNLOAD_DIR}/${BUNDLE_FILE}"
-    chown admin:admin "${DOWNLOAD_DIR}/${BUNDLE_FILE}"
+    if id "${controller_user}" >/dev/null 2>&1; then
+      chown "${controller_user}:${controller_user}" "${DOWNLOAD_DIR}/${BUNDLE_FILE}" 2>/dev/null || true
+    fi
   else
     local local_bundle_path
     file_type="$(file -b "${tmp_bundle}" 2>/dev/null || echo "unknown")"
@@ -558,11 +567,26 @@ download_bundle() {
     warn "First lines of downloaded content:"
     head -n 5 "${tmp_bundle}" 2>/dev/null | sed 's/^/  /' || true
 
+    if [[ "${retry_depth}" -lt 1 ]]; then
+      read -r -p "Re-enter Red Hat CDN username/password and retry download now? [Y/n]: " retry_creds
+      if [[ ! "${retry_creds:-Y}" =~ ^[Nn]$ ]]; then
+        read -r -p "Enter RHSM_USERNAME (Red Hat Login/CDN/registry/console username): " RHSM_USERNAME
+        read_secret_prompt RHSM_PASSWORD "Enter RHSM_PASSWORD (Red Hat Login/CDN/registry/console password)"
+        save_env_kv "RHSM_USERNAME" "${RHSM_USERNAME}"
+        save_env_kv "RHSM_PASSWORD" "${RHSM_PASSWORD}"
+        rm -f "${tmp_bundle}" || true
+        download_bundle "$((retry_depth + 1))"
+        return $?
+      fi
+    fi
+
     read -r -p "Enter local path to a valid AAP bundle tar.gz (or press ENTER to abort): " local_bundle_path
     if [[ -n "${local_bundle_path}" && -f "${local_bundle_path}" ]]; then
       if tar -tzf "${local_bundle_path}" >/dev/null 2>&1 || tar -tf "${local_bundle_path}" >/dev/null 2>&1; then
         cp -f "${local_bundle_path}" "${DOWNLOAD_DIR}/${BUNDLE_FILE}"
-        chown admin:admin "${DOWNLOAD_DIR}/${BUNDLE_FILE}" 2>/dev/null || true
+        if id "${controller_user}" >/dev/null 2>&1; then
+          chown "${controller_user}:${controller_user}" "${DOWNLOAD_DIR}/${BUNDLE_FILE}" 2>/dev/null || true
+        fi
         rm -f "${tmp_bundle}" || true
         ok "Using local bundle file: ${local_bundle_path}"
         ok "Setup bundle download completed: ${BUNDLE_FILE}."
@@ -913,7 +937,7 @@ run_execution_playbook() {
       -e
       ansible_connection=ssh
       -e
-      "ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      "ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'"
       -e
       redis_mode=standalone
       -e
