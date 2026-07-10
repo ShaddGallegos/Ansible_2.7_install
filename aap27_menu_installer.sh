@@ -186,13 +186,15 @@ setup_admin_rootless_podman() {
 }
 
 login_registry_as_admin() {
-  local login_user="${1:-${RHSM_USERNAME:-}}"
-  local login_pass="${2:-${RHSM_PASSWORD:-}}"
+  local login_user login_pass
+
+  login_user="${1:-${RHSM_USERNAME:-${CDN_USERNAME:-${REDHAT_USERNAME:-${CONSOLE_USERNAME:-}}}}}"
+  login_pass="${2:-${RHSM_PASSWORD:-${CDN_PASSWORD:-${REDHAT_PASSWORD:-${CONSOLE_PASSWORD:-}}}}}"
 
   if [[ -z "${login_user}" || -z "${login_pass}" ]]; then
     load_env
-    login_user="${login_user:-${RHSM_USERNAME:-}}"
-    login_pass="${login_pass:-${RHSM_PASSWORD:-}}"
+    login_user="${login_user:-${RHSM_USERNAME:-${CDN_USERNAME:-${REDHAT_USERNAME:-${CONSOLE_USERNAME:-}}}}}"
+    login_pass="${login_pass:-${RHSM_PASSWORD:-${CDN_PASSWORD:-${REDHAT_PASSWORD:-${CONSOLE_PASSWORD:-}}}}}"
   fi
 
   if ! id admin >/dev/null 2>&1; then
@@ -624,6 +626,12 @@ EOF
 
   save_env_kv "RHSM_USERNAME" "${rhsm_user}"
   save_env_kv "RHSM_PASSWORD" "${rhsm_pass}"
+  save_env_kv "CDN_USERNAME" "${rhsm_user}"
+  save_env_kv "CDN_PASSWORD" "${rhsm_pass}"
+  save_env_kv "REDHAT_USERNAME" "${rhsm_user}"
+  save_env_kv "REDHAT_PASSWORD" "${rhsm_pass}"
+  save_env_kv "CONSOLE_USERNAME" "${rhsm_user}"
+  save_env_kv "CONSOLE_PASSWORD" "${rhsm_pass}"
   save_env_kv "RH_OFFLINE_TOKEN" "${offline_token}"
   save_env_kv "RH_AH_TOKEN" "${hub_token}"
   save_env_kv "BUNDLE_URL" "${bundle_url:-$BUNDLE_URL_DEFAULT}"
