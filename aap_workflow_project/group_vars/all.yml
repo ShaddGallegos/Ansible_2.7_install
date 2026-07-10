@@ -22,6 +22,7 @@ machine_credential_name: "AAP Install Machine Credential"
 registry_credential_name: "RH Registry Credential"
 
 # Credential values (replace securely)
+# Must be a non-root user (containerized installer preflight requires this).
 machine_credential_username: "admin"
 machine_credential_password: ""
 registry_username: ""

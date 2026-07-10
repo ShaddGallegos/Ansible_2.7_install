@@ -73,8 +73,22 @@
             log_gathering
             restore
             uninstall
+        - question_name: "Remote SSH User"
+          question_description: "Non-root SSH user for installer execution"
+          required: true
+          type: text
+          variable: remote_user
+          default: "{{ machine_credential_username }}"
+          min: 1
+          max: 64
 
   tasks:
+    - name: Validate machine credential username is non-root
+      ansible.builtin.assert:
+        that:
+          - machine_credential_username != 'root'
+        fail_msg: "machine_credential_username must be non-root for containerized installer preflight"
+
     - name: Ensure organization exists
       awx.awx.organization:
         name: "{{ aap_org_name }}"

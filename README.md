@@ -101,14 +101,17 @@ Before running install, confirm:
 ```bash
 cd "/home/sgallego/GIT/Ansible_2.7_install"
 chmod +x aap27_menu_installer.sh
-sudo ./aap27_menu_installer.sh
+./aap27_menu_installer.sh
 ```
 
 The script is menuized and can be run in stages.
 
+Recommended launch user is `admin` (with passwordless sudo); the script now escalates only privileged operations internally.
+
 ## Important Notes
 
 - Disabling firewall and setting SELinux permissive is included because requested, but this is generally not recommended for production hardening.
+- Installer execution (Step 10) requires a non-root SSH remote user; root is rejected by containerized installer preflight.
 - Secrets are stored in a local env file:
   - `/home/admin/.aap27_install.env`
   - permissions `0600`

@@ -14,6 +14,7 @@ Use this checklist before running the installer or the AAP workflow project.
 ## Host Readiness
 
 - [ ] Root or passwordless sudo access
+- [ ] `admin` can run this script directly with passwordless sudo
 - [ ] RHEL host meets CPU/RAM/storage requirements
 - [ ] DNS and reverse DNS configured
 - [ ] NTP/chrony synchronized
@@ -47,7 +48,7 @@ Use this checklist before running the installer or the AAP workflow project.
 ## Shell Menu Execution Command
 
 ```bash
-ansible-playbook -i inventory-growth ansible.containerized_installer.install
+ansible-playbook -i inventory-growth -u admin -e ansible_user=admin ansible.containerized_installer.install
 ```
 
 ## Ansible Workflow (Controller-Driven)
@@ -78,4 +79,5 @@ ansible-playbook -i inventory/controller.ini playbooks/create_controller_resourc
 
 - [ ] Open generated workflow template in AAP Controller
 - [ ] Launch and complete survey values
+- [ ] Set `remote_user` to a non-root SSH user (for example `admin`)
 - [ ] Set `execution_playbook` to one of: `install`, `backup`, `bundle`, `install_standalone_mcp`, `log_gathering`, `restore`, `uninstall`

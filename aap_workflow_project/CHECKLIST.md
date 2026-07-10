@@ -20,6 +20,7 @@
 - [ ] Project synced from GitHub
 - [ ] Inventory contains target install host
 - [ ] Machine credential for target host created
+- [ ] Machine credential username is non-root (for example `admin`)
 - [ ] Job templates created and linked
 - [ ] Surveys reviewed and adjusted for your environment
 
@@ -27,4 +28,5 @@
 
 - [ ] Launch workflow template from AAP UI/API
 - [ ] Survey prompts appear as expected
+- [ ] `remote_user` survey value is non-root (for example `admin`)
 - [ ] Each node completes in order

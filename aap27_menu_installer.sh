@@ -22,9 +22,17 @@ err() { echo -e "${RED}[ERR ]${NC} $*"; }
 ok() { echo -e "${GRN}[ OK ]${NC} $*"; }
 
 require_root() {
-  if [[ ${EUID} -ne 0 ]]; then
-    err "Run as root or with sudo."
+  if [[ ${EUID} -ne 0 ]] && ! command -v sudo >/dev/null 2>&1; then
+    err "Run as root, or install sudo for non-root execution."
     exit 1
+  fi
+}
+
+run_privileged() {
+  if [[ ${EUID} -eq 0 ]]; then
+    "$@"
+  else
+    sudo "$@"
   fi
 }
 
@@ -61,14 +69,14 @@ ensure_admin_user_exists() {
 
   warn "admin user does not exist; creating it now."
   if [[ -d "${ADMIN_HOME}" ]]; then
-    useradd -M -d "${ADMIN_HOME}" -s /bin/bash admin
+    run_privileged useradd -M -d "${ADMIN_HOME}" -s /bin/bash admin
   else
-    useradd -m -s /bin/bash admin
+    run_privileged useradd -m -s /bin/bash admin
   fi
 
   if [[ -d "${ADMIN_HOME}" ]]; then
-    chown admin:admin "${ADMIN_HOME}"
-    chmod 0750 "${ADMIN_HOME}" || true
+    run_privileged chown admin:admin "${ADMIN_HOME}"
+    run_privileged chmod 0750 "${ADMIN_HOME}" || true
   fi
 
   ok "admin user created."
@@ -99,6 +107,7 @@ Credential and token references:
   https://console.redhat.com/ansible/automation-hub/token
 
 Tip: enter step? for contextual guidance (example: 6?)
+Launch as admin is supported; privileged operations use sudo internally.
 EOF
   pause_enter
 }
@@ -271,12 +280,12 @@ prework_packages() {
   log "Installing required prework packages."
 
   if command -v dnf >/dev/null 2>&1; then
-    dnf -y install "${packages[@]}" || warn "One or more packages failed to install."
+    run_privileged dnf -y install "${packages[@]}" || warn "One or more packages failed to install."
   else
     warn "dnf not found; package installation skipped."
   fi
 
-  systemctl enable --now sshd || warn "Unable to enable/start sshd."
+  run_privileged systemctl enable --now sshd || warn "Unable to enable/start sshd."
   ok "Prework package installation step completed."
 }
 
@@ -297,18 +306,18 @@ EOF
 
   log "Applying installation-mode firewall and SELinux settings."
 
-  if systemctl is-active --quiet firewalld; then
-    systemctl disable --now firewalld
+  if run_privileged systemctl is-active --quiet firewalld; then
+    run_privileged systemctl disable --now firewalld
   else
     warn "firewalld is already stopped or not installed."
   fi
 
   if command -v setenforce >/dev/null 2>&1; then
-    setenforce 0 || warn "Unable to set SELinux runtime mode to permissive."
+    run_privileged setenforce 0 || warn "Unable to set SELinux runtime mode to permissive."
   fi
 
   if [[ -f /etc/selinux/config ]]; then
-    sed -i 's/^SELINUX=.*/SELINUX=permissive/' /etc/selinux/config
+    run_privileged sed -i 's/^SELINUX=.*/SELINUX=permissive/' /etc/selinux/config
   fi
 
   ok "Firewall and SELinux settings applied."
@@ -365,26 +374,26 @@ EOF
     return 0
   fi
 
-  hostnamectl set-hostname "${target_fqdn}"
+  run_privileged hostnamectl set-hostname "${target_fqdn}"
 
   if [[ -n "${target_domain}" ]]; then
     if command -v domainname >/dev/null 2>&1; then
-      domainname "${target_domain}" || warn "Unable to set domainname value."
+      run_privileged domainname "${target_domain}" || warn "Unable to set domainname value."
     fi
     if [[ -f /etc/sysconfig/network ]]; then
       if grep -q '^DOMAINNAME=' /etc/sysconfig/network; then
-        sed -i "s/^DOMAINNAME=.*/DOMAINNAME=${target_domain}/" /etc/sysconfig/network
+        run_privileged sed -i "s/^DOMAINNAME=.*/DOMAINNAME=${target_domain}/" /etc/sysconfig/network
       else
-        echo "DOMAINNAME=${target_domain}" >> /etc/sysconfig/network
+        printf 'DOMAINNAME=%s\n' "${target_domain}" | run_privileged tee -a /etc/sysconfig/network >/dev/null
       fi
     fi
   else
     warn "No domain component detected in FQDN; domain-specific updates skipped."
   fi
 
-  sed -i "/[[:space:]]${target_fqdn//./\\.}[[:space:]]/d" /etc/hosts || true
-  sed -i "/[[:space:]]aap$/d" /etc/hosts || true
-  echo "${system_ip} ${target_fqdn} aap" >> /etc/hosts
+  run_privileged sed -i "/[[:space:]]${target_fqdn//./\\.}[[:space:]]/d" /etc/hosts || true
+  run_privileged sed -i "/[[:space:]]aap$/d" /etc/hosts || true
+  printf '%s %s aap\n' "${system_ip}" "${target_fqdn}" | run_privileged tee -a /etc/hosts >/dev/null
 
   ok "Host identity updated. FQDN=${target_fqdn}, domain=${target_domain:-<unset>}."
 }
@@ -395,30 +404,28 @@ setup_admin_user() {
   ensure_admin_user_exists
   log "admin user is present."
 
-  cat >/etc/sudoers.d/admin <<'EOF'
-admin ALL=(ALL) NOPASSWD: ALL
-EOF
-  chmod 0440 /etc/sudoers.d/admin
+  printf '%s\n' 'admin ALL=(ALL) NOPASSWD: ALL' | run_privileged tee /etc/sudoers.d/admin >/dev/null
+  run_privileged chmod 0440 /etc/sudoers.d/admin
 
   # Ensure admin home and SSH directory are writable by admin before key operations.
   if [[ -d "${ADMIN_HOME}" ]]; then
-    chown admin:admin "${ADMIN_HOME}"
+    run_privileged chown admin:admin "${ADMIN_HOME}"
     chmod 0750 "${ADMIN_HOME}" || true
   fi
 
   mkdir -p "${ADMIN_HOME}/.ssh"
-  chown admin:admin "${ADMIN_HOME}/.ssh"
+  run_privileged chown admin:admin "${ADMIN_HOME}/.ssh"
   chmod 700 "${ADMIN_HOME}/.ssh"
 
   if [[ ! -f "${ADMIN_HOME}/.ssh/id_ed25519" ]]; then
     ssh-keygen -t ed25519 -N "" -f "${ADMIN_HOME}/.ssh/id_ed25519" >/dev/null
-    chown admin:admin "${ADMIN_HOME}/.ssh/id_ed25519" "${ADMIN_HOME}/.ssh/id_ed25519.pub"
+    run_privileged chown admin:admin "${ADMIN_HOME}/.ssh/id_ed25519" "${ADMIN_HOME}/.ssh/id_ed25519.pub"
     chmod 600 "${ADMIN_HOME}/.ssh/id_ed25519"
     chmod 644 "${ADMIN_HOME}/.ssh/id_ed25519.pub"
   fi
 
   read_secret_prompt admin_password "Enter password for admin user"
-  echo "admin:${admin_password}" | chpasswd
+  printf 'admin:%s\n' "${admin_password}" | run_privileged chpasswd
   save_env_kv "ADMIN_PASSWORD" "${admin_password}"
 
   host_fqdn="$(hostname -f 2>/dev/null || hostname)"
@@ -433,7 +440,7 @@ EOF
     warn "sshpass is not installed; skipping ssh-copy-id."
   fi
 
-  chown -R admin:admin "${ADMIN_HOME}/.ssh"
+  run_privileged chown -R admin:admin "${ADMIN_HOME}/.ssh"
   ok "admin user setup complete."
 }
 

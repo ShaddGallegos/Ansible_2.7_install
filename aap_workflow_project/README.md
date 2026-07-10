@@ -36,7 +36,8 @@ ansible-galaxy collection install -r requirements.yml
 ```
 
 2. Update `group_vars/all.yml` with controller URL and auth.
-3. Ensure controller token/user can manage resources.
+3. Set `machine_credential_username` to a non-root SSH user (for example `admin`).
+4. Ensure controller token/user can manage resources.
 
 ## Run
 
@@ -47,5 +48,6 @@ ansible-playbook -i inventory/controller.ini playbooks/create_controller_resourc
 ## Design Notes
 
 - Surveys are enabled on templates to collect runtime values.
+- Install survey includes `remote_user`; it must be non-root to satisfy containerized installer preflight.
 - Workflow links templates in this sequence:
   - Prework -> Host Identity -> Download Bundle -> Install AAP
