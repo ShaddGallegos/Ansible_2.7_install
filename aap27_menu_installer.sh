@@ -49,26 +49,46 @@ pause_enter() {
 }
 
 initialize_env_file() {
-  local env_dir fallback_env
+  local env_dir candidate
+  local -a candidates
+
   env_dir="$(dirname "${ENV_FILE}")"
 
-  if [[ ( -f "${ENV_FILE}" && ! -w "${ENV_FILE}" ) || ! -d "${env_dir}" || ! -w "${env_dir}" ]]; then
-    fallback_env="${HOME:-/tmp}/.aap27_install.env"
-    warn "Cannot write to ${ENV_FILE}; using ${fallback_env} for installer state."
-    ENV_FILE="${fallback_env}"
-    env_dir="$(dirname "${ENV_FILE}")"
-  fi
-
-  mkdir -p "${env_dir}"
-  if ! touch "${ENV_FILE}" 2>/dev/null; then
-    fallback_env="${HOME:-/tmp}/.aap27_install.env"
-    warn "Unable to create ${ENV_FILE}; falling back to ${fallback_env}."
-    ENV_FILE="${fallback_env}"
-    env_dir="$(dirname "${ENV_FILE}")"
+  if [[ ( -f "${ENV_FILE}" && -w "${ENV_FILE}" ) || ( -d "${env_dir}" && -w "${env_dir}" ) ]]; then
     mkdir -p "${env_dir}"
     touch "${ENV_FILE}"
+    chmod 600 "${ENV_FILE}"
+    return 0
   fi
-  chmod 600 "${ENV_FILE}"
+
+  candidates=(
+    "${HOME:-}/.aap27_install.env"
+    "/tmp/.aap27_install_${USER:-$(id -u)}.env"
+    "${PWD}/.aap27_install.env"
+  )
+
+  for candidate in "${candidates[@]}"; do
+    [[ -n "${candidate}" ]] || continue
+    [[ "${candidate}" == "${ENV_FILE}" ]] && continue
+
+    env_dir="$(dirname "${candidate}")"
+    if [[ ! -d "${env_dir}" ]] && ! mkdir -p "${env_dir}" 2>/dev/null; then
+      continue
+    fi
+    if [[ ! -w "${env_dir}" ]]; then
+      continue
+    fi
+    if touch "${candidate}" 2>/dev/null; then
+      warn "Cannot write to ${ENV_FILE}; using ${candidate} for installer state."
+      ENV_FILE="${candidate}"
+      chmod 600 "${ENV_FILE}" || true
+      return 0
+    fi
+  done
+
+  err "Unable to initialize installer env file. Tried: ${ENV_FILE}, ${HOME:-<unset>}/.aap27_install.env, /tmp/.aap27_install_${USER:-uid}.env, ${PWD}/.aap27_install.env"
+  err "Fix directory permissions or export ENV_FILE to a writable path and re-run."
+  exit 1
 }
 
 load_env() {
