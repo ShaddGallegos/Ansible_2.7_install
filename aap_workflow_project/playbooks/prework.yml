@@ -7,6 +7,8 @@
   vars:
     disable_firewall_for_install: "{{ disable_firewall_for_install | default(true) }}"
     set_selinux_permissive_for_install: "{{ set_selinux_permissive_for_install | default(true) }}"
+    effective_registry_username: "{{ rhsm_username | default(registry_username | default('')) }}"
+    effective_registry_password: "{{ rhsm_password | default(registry_password | default('')) }}"
 
   tasks:
     - name: Install required packages (best effort)
@@ -21,10 +23,68 @@
           - curl
           - jq
           - rsync
+          - podman
           - python3
           - python3-pip
         state: present
       when: ansible_os_family == "RedHat"
+
+    - name: Ensure admin user exists for rootless podman
+      ansible.builtin.user:
+        name: admin
+        shell: /bin/bash
+        create_home: true
+        state: present
+
+    - name: Ensure subuid entry exists for admin
+      ansible.builtin.lineinfile:
+        path: /etc/subuid
+        regexp: '^admin:'
+        line: 'admin:100000:65536'
+        create: true
+        state: present
+
+    - name: Ensure subgid entry exists for admin
+      ansible.builtin.lineinfile:
+        path: /etc/subgid
+        regexp: '^admin:'
+        line: 'admin:100000:65536'
+        create: true
+        state: present
+
+    - name: Enable lingering for admin
+      ansible.builtin.command: loginctl enable-linger admin
+      changed_when: false
+      failed_when: false
+
+    - name: Get admin UID
+      ansible.builtin.command: id -u admin
+      register: admin_uid
+      changed_when: false
+
+    - name: Run podman system migrate for admin
+      become_user: admin
+      ansible.builtin.command: podman system migrate
+      changed_when: false
+      failed_when: false
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ admin_uid.stdout }}"
+
+    - name: Login to registry.redhat.io as admin (rootless podman)
+      become_user: admin
+      ansible.builtin.shell: |
+        printf '%s\n' {{ effective_registry_password | quote }} | \
+        podman login registry.redhat.io --username {{ effective_registry_username | quote }} --password-stdin
+      args:
+        executable: /bin/bash
+      no_log: true
+      changed_when: false
+      failed_when: false
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ admin_uid.stdout }}"
+      when:
+        - effective_registry_username | length > 0
+        - effective_registry_password | length > 0
 
     - name: Disable firewalld for installation
       ansible.builtin.systemd:

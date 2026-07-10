@@ -27,6 +27,8 @@ Use this checklist before running the installer or the AAP workflow project.
 - [ ] `admin` has passwordless sudo (`/etc/sudoers.d/admin`)
 - [ ] SSH keys created for `admin`
 - [ ] `admin` key copied to target node(s)
+- [ ] Rootless podman is configured for `admin` (`/etc/subuid`, `/etc/subgid`)
+- [ ] `podman login registry.redhat.io` succeeds for `admin`
 
 ## Platform Components
 

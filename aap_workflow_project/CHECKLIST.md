@@ -21,6 +21,8 @@
 - [ ] Inventory contains target install host
 - [ ] Machine credential for target host created
 - [ ] Machine credential username is non-root (for example `admin`)
+- [ ] Rootless podman prepared for `admin` (`/etc/subuid`, `/etc/subgid`, linger)
+- [ ] Registry login valid for `admin` (`registry.redhat.io`)
 - [ ] Job templates created and linked
 - [ ] Surveys reviewed and adjusted for your environment
 

@@ -49,5 +49,6 @@ ansible-playbook -i inventory/controller.ini playbooks/create_controller_resourc
 
 - Surveys are enabled on templates to collect runtime values.
 - Install survey includes `remote_user`; it must be non-root to satisfy containerized installer preflight.
+- Prework configures rootless podman for `admin` and attempts `registry.redhat.io` login using RHSM credentials.
 - Workflow links templates in this sequence:
   - Prework -> Host Identity -> Download Bundle -> Install AAP

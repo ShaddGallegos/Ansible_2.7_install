@@ -16,6 +16,8 @@ This folder contains a menu-driven bash helper for preparing and installing Red 
 - Optionally disables firewall and sets SELinux to permissive for install workflows.
 - Creates and configures an `admin` user with passwordless sudo and SSH keys.
 - Captures required credentials/tokens and stores them in a local env file with restricted permissions.
+- Logs `admin` into `registry.redhat.io` using RHSM credentials.
+- Configures rootless podman for `admin` (`/etc/subuid`, `/etc/subgid`, linger, migrate).
 - Downloads the AAP 2.7-2 containerized bundle to `/home/admin/Downloads/`.
 - Extracts the bundle and updates `inventory-growth` with requested values.
 - Runs selected execution playbooks from `ansible.containerized_installer`:
@@ -89,7 +91,7 @@ Before running install, confirm:
    - `access.cdn.redhat.com`
    - `console.redhat.com`
 5. Credentials/tokens are ready:
-   - RHSM username/password
+  - RHSM username/password (same credentials generally used for Red Hat Login, CDN, and `registry.redhat.io`)
    - Red Hat offline token: https://access.redhat.com/management/api
    - Red Hat Automation Hub token: https://console.redhat.com/ansible/automation-hub/token
 6. You have root/sudo access.

@@ -141,6 +141,83 @@ ensure_admin_user_exists() {
   ok "admin user created."
 }
 
+ensure_subid_entry() {
+  local subid_file="$1"
+  local user_name="$2"
+  local start_id="$3"
+  local range_size="$4"
+
+  if [[ ! -f "${subid_file}" ]]; then
+    run_privileged touch "${subid_file}"
+  fi
+
+  if run_privileged grep -qE "^${user_name}:" "${subid_file}"; then
+    return 0
+  fi
+
+  printf '%s:%s:%s\n' "${user_name}" "${start_id}" "${range_size}" | run_privileged tee -a "${subid_file}" >/dev/null
+}
+
+setup_admin_rootless_podman() {
+  if ! id admin >/dev/null 2>&1; then
+    warn "admin user does not exist; skipping rootless podman setup."
+    return 0
+  fi
+
+  if ! command -v podman >/dev/null 2>&1; then
+    warn "podman is not installed; skipping rootless podman setup."
+    return 0
+  fi
+
+  ensure_subid_entry /etc/subuid admin 100000 65536
+  ensure_subid_entry /etc/subgid admin 100000 65536
+
+  if command -v loginctl >/dev/null 2>&1; then
+    run_privileged loginctl enable-linger admin >/dev/null 2>&1 || warn "Unable to enable lingering for admin."
+  fi
+
+  if [[ ${EUID} -eq 0 ]] && command -v runuser >/dev/null 2>&1; then
+    runuser -u admin -- podman system migrate >/dev/null 2>&1 || true
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo -u admin podman system migrate >/dev/null 2>&1 || true
+  fi
+
+  ok "Rootless podman setup ensured for admin."
+}
+
+login_registry_as_admin() {
+  if ! id admin >/dev/null 2>&1; then
+    warn "admin user does not exist; skipping registry.redhat.io login."
+    return 0
+  fi
+
+  if ! command -v podman >/dev/null 2>&1; then
+    warn "podman is not installed; skipping registry.redhat.io login."
+    return 0
+  fi
+
+  if [[ -z "${RHSM_USERNAME:-}" || -z "${RHSM_PASSWORD:-}" ]]; then
+    warn "RHSM credentials are missing; skipping registry.redhat.io login."
+    return 0
+  fi
+
+  if [[ ${EUID} -eq 0 ]] && command -v runuser >/dev/null 2>&1; then
+    if printf '%s\n' "${RHSM_PASSWORD}" | runuser -u admin -- podman login registry.redhat.io --username "${RHSM_USERNAME}" --password-stdin >/dev/null 2>&1; then
+      ok "registry.redhat.io login succeeded for admin (rootless podman)."
+    else
+      warn "registry.redhat.io login failed for admin. Verify RHSM credentials."
+    fi
+  elif command -v sudo >/dev/null 2>&1; then
+    if printf '%s\n' "${RHSM_PASSWORD}" | sudo -u admin podman login registry.redhat.io --username "${RHSM_USERNAME}" --password-stdin >/dev/null 2>&1; then
+      ok "registry.redhat.io login succeeded for admin (rootless podman)."
+    else
+      warn "registry.redhat.io login failed for admin. Verify RHSM credentials."
+    fi
+  else
+    warn "Neither runuser nor sudo available; skipping registry.redhat.io login."
+  fi
+}
+
 show_checklist() {
   clear
   cat <<'EOF'
@@ -323,6 +400,7 @@ prework_packages() {
     curl
     jq
     rsync
+    podman
     python3
     python3-pip
     ansible-core
@@ -345,6 +423,7 @@ prework_packages() {
   fi
 
   run_privileged systemctl enable --now sshd || warn "Unable to enable/start sshd."
+  setup_admin_rootless_podman
   ok "Prework package installation step completed."
 }
 
@@ -500,6 +579,7 @@ setup_admin_user() {
   fi
 
   run_privileged chown -R admin:admin "${ADMIN_HOME}/.ssh"
+  setup_admin_rootless_podman
   ok "admin user setup complete."
 }
 
@@ -538,6 +618,9 @@ EOF
   save_env_kv "RH_OFFLINE_TOKEN" "${offline_token}"
   save_env_kv "RH_AH_TOKEN" "${hub_token}"
   save_env_kv "BUNDLE_URL" "${bundle_url:-$BUNDLE_URL_DEFAULT}"
+
+  setup_admin_rootless_podman
+  login_registry_as_admin
 
   ok "Credentials and tokens saved to ${ENV_FILE} (mode 600)."
 }
@@ -1121,6 +1204,7 @@ run_execution_playbook() {
   fi
 
   enforce_inventory_runtime_settings "${install_dir}/inventory-growth"
+  login_registry_as_admin
 
   runtime_host_line="$(awk '/^[[:space:]]*#/ || /^\[/ || /^[[:space:]]*$/ { next } { print; exit }' "${install_dir}/inventory-growth")"
   runtime_user="$(get_inventory_var "${install_dir}/inventory-growth" "ansible_user")"
