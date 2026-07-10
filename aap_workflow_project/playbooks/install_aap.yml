@@ -98,6 +98,16 @@
           - ansible-playbook
           - -i
           - inventory-growth
+          - -u
+          - "{{ remote_user }}"
+          - -c
+          - ssh
+          - -e
+          - "ansible_user={{ remote_user }}"
+          - -e
+          - ansible_become=true
+          - -e
+          - ansible_connection=ssh
           - "ansible.containerized_installer.{{ execution_playbook }}"
       args:
         chdir: "{{ bundle_dir }}"
