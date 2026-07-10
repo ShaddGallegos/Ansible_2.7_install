@@ -80,7 +80,8 @@
           registry_username='{{ rhsm_username }}'
           registry_password='{{ rhsm_password }}'
           ansible_user='{{ remote_user }}'
-          ansible_become='false'
+          ansible_become='true'
+          ansible_become_method='sudo'
           ansible_connection='ssh'
 
     - name: Validate requested execution playbook
@@ -105,7 +106,9 @@
           - -e
           - "ansible_user={{ remote_user }}"
           - -e
-          - ansible_become=false
+          - ansible_become=true
+          - -e
+          - ansible_become_method=sudo
           - -e
           - ansible_connection=ssh
           - "ansible.containerized_installer.{{ execution_playbook }}"
