@@ -186,6 +186,15 @@ setup_admin_rootless_podman() {
 }
 
 login_registry_as_admin() {
+  local login_user="${1:-${RHSM_USERNAME:-}}"
+  local login_pass="${2:-${RHSM_PASSWORD:-}}"
+
+  if [[ -z "${login_user}" || -z "${login_pass}" ]]; then
+    load_env
+    login_user="${login_user:-${RHSM_USERNAME:-}}"
+    login_pass="${login_pass:-${RHSM_PASSWORD:-}}"
+  fi
+
   if ! id admin >/dev/null 2>&1; then
     warn "admin user does not exist; skipping registry.redhat.io login."
     return 0
@@ -196,19 +205,19 @@ login_registry_as_admin() {
     return 0
   fi
 
-  if [[ -z "${RHSM_USERNAME:-}" || -z "${RHSM_PASSWORD:-}" ]]; then
+  if [[ -z "${login_user}" || -z "${login_pass}" ]]; then
     warn "RHSM credentials are missing; skipping registry.redhat.io login."
     return 0
   fi
 
   if [[ ${EUID} -eq 0 ]] && command -v runuser >/dev/null 2>&1; then
-    if printf '%s\n' "${RHSM_PASSWORD}" | runuser -u admin -- podman login registry.redhat.io --username "${RHSM_USERNAME}" --password-stdin >/dev/null 2>&1; then
+    if printf '%s\n' "${login_pass}" | runuser -u admin -- podman login registry.redhat.io --username "${login_user}" --password-stdin >/dev/null 2>&1; then
       ok "registry.redhat.io login succeeded for admin (rootless podman)."
     else
       warn "registry.redhat.io login failed for admin. Verify RHSM credentials."
     fi
   elif command -v sudo >/dev/null 2>&1; then
-    if printf '%s\n' "${RHSM_PASSWORD}" | sudo -u admin podman login registry.redhat.io --username "${RHSM_USERNAME}" --password-stdin >/dev/null 2>&1; then
+    if printf '%s\n' "${login_pass}" | sudo -u admin podman login registry.redhat.io --username "${login_user}" --password-stdin >/dev/null 2>&1; then
       ok "registry.redhat.io login succeeded for admin (rootless podman)."
     else
       warn "registry.redhat.io login failed for admin. Verify RHSM credentials."
@@ -620,7 +629,7 @@ EOF
   save_env_kv "BUNDLE_URL" "${bundle_url:-$BUNDLE_URL_DEFAULT}"
 
   setup_admin_rootless_podman
-  login_registry_as_admin
+  login_registry_as_admin "${rhsm_user}" "${rhsm_pass}"
 
   ok "Credentials and tokens saved to ${ENV_FILE} (mode 600)."
 }
