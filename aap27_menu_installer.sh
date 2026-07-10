@@ -44,6 +44,14 @@ run_privileged() {
   fi
 }
 
+enforce_admin_home_ownership() {
+  if id admin >/dev/null 2>&1; then
+    run_privileged chown -R admin:admin /home/admin
+  else
+    warn "admin user does not exist yet; skipping /home/admin ownership enforcement."
+  fi
+}
+
 pause_enter() {
   read -r -p "Press ENTER to continue..." _unused
 }
@@ -1054,7 +1062,7 @@ enforce_inventory_runtime_settings() {
     { print }
   ' "${inv_file}" > "${inv_file}.tmp" && mv "${inv_file}.tmp" "${inv_file}"
 
-  if command -v runuser >/dev/null 2>&1 && id "${controller_user}" >/dev/null 2>&1; then
+  if [[ ${EUID} -eq 0 ]] && command -v runuser >/dev/null 2>&1 && id "${controller_user}" >/dev/null 2>&1; then
     runuser -u "${controller_user}" -- ssh-keygen -R aap >/dev/null 2>&1 || true
     runuser -u "${controller_user}" -- ssh-keygen -R "${target_fqdn}" >/dev/null 2>&1 || true
   elif command -v sudo >/dev/null 2>&1 && id "${controller_user}" >/dev/null 2>&1; then
@@ -1161,7 +1169,9 @@ run_execution_playbook() {
       warn "Controller SSH key not found: ${controller_key}. SSH may fail unless agent/password auth is configured."
     fi
 
-    if command -v runuser >/dev/null 2>&1 && id "${controller_user}" >/dev/null 2>&1; then
+    if [[ "${USER:-}" == "${controller_user}" ]]; then
+      env ANSIBLE_DEPRECATION_WARNINGS=False "${ansible_cmd[@]}"
+    elif [[ ${EUID} -eq 0 ]] && command -v runuser >/dev/null 2>&1 && id "${controller_user}" >/dev/null 2>&1; then
       runuser -u "${controller_user}" -- env ANSIBLE_DEPRECATION_WARNINGS=False "${ansible_cmd[@]}"
     elif command -v sudo >/dev/null 2>&1 && id "${controller_user}" >/dev/null 2>&1; then
       HOME="${controller_home}" sudo -u "${controller_user}" env ANSIBLE_DEPRECATION_WARNINGS=False "${ansible_cmd[@]}"
@@ -1288,6 +1298,7 @@ EOF
 
 main() {
   require_root
+  enforce_admin_home_ownership
   mkdir -p "${DOWNLOAD_DIR}"
   initialize_env_file
   menu
