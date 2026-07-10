@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-set -euo pipefail
-
-if [[ -z "${BASH_VERSION:-}" ]]; then
-  echo "Run this script with bash (for example: ./aap27_menu_installer.sh)."
+if [ -z "${BASH_VERSION:-}" ]; then
+  if command -v bash >/dev/null 2>&1; then
+    exec bash "$0" "$@"
+  fi
+  echo "Bash is required to run this script."
   exit 1
 fi
+
+set -euo pipefail
 
 BUNDLE_FILE="ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64.tar.gz"
 BUNDLE_URL_DEFAULT="https://access.cdn.redhat.com/content/origin/files/sha256/5c/5c0e1834c1ae609ce840865b5aa279b5c5bde9118856b326f77cc5c8bf92d9af/ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64.tar.gz"
@@ -49,7 +52,7 @@ initialize_env_file() {
   local env_dir fallback_env
   env_dir="$(dirname "${ENV_FILE}")"
 
-  if [[ ! -d "${env_dir}" ]] || [[ ! -w "${env_dir}" ]]; then
+  if [[ ( -f "${ENV_FILE}" && ! -w "${ENV_FILE}" ) || ! -d "${env_dir}" || ! -w "${env_dir}" ]]; then
     fallback_env="${HOME:-/tmp}/.aap27_install.env"
     warn "Cannot write to ${ENV_FILE}; using ${fallback_env} for installer state."
     ENV_FILE="${fallback_env}"
@@ -57,7 +60,14 @@ initialize_env_file() {
   fi
 
   mkdir -p "${env_dir}"
-  touch "${ENV_FILE}"
+  if ! touch "${ENV_FILE}" 2>/dev/null; then
+    fallback_env="${HOME:-/tmp}/.aap27_install.env"
+    warn "Unable to create ${ENV_FILE}; falling back to ${fallback_env}."
+    ENV_FILE="${fallback_env}"
+    env_dir="$(dirname "${ENV_FILE}")"
+    mkdir -p "${env_dir}"
+    touch "${ENV_FILE}"
+  fi
   chmod 600 "${ENV_FILE}"
 }
 
