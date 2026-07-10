@@ -656,6 +656,90 @@ upsert_inventory_var() {
   fi
 }
 
+inventory_baseline_path() {
+  local file="$1"
+  printf '%s.pre_script.bak' "${file}"
+}
+
+ensure_inventory_baseline_backup() {
+  local file="$1"
+  local baseline
+
+  if [[ ! -f "${file}" ]]; then
+    return 0
+  fi
+
+  baseline="$(inventory_baseline_path "${file}")"
+  if [[ -f "${baseline}" ]]; then
+    return 0
+  fi
+
+  cp -p "${file}" "${baseline}"
+  ok "Created inventory baseline backup: ${baseline}"
+}
+
+run_post_uninstall_cleanup() {
+  local install_dir="$1"
+  local inv_file baseline purge_reply purge_downloads
+
+  inv_file="${install_dir}/inventory-growth"
+  baseline="$(inventory_baseline_path "${inv_file}")"
+  purge_downloads="false"
+
+  load_env
+  if [[ "${AAP_CLEANUP_PURGE_DOWNLOADS:-}" =~ ^([Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|1)$ ]]; then
+    purge_downloads="true"
+  elif [[ -t 0 ]]; then
+    read -r -p "Also remove downloaded bundle artifacts (${install_dir} and ${DOWNLOAD_DIR}/${BUNDLE_FILE})? [y/N]: " purge_reply
+    if [[ "${purge_reply:-N}" =~ ^[Yy]$ ]]; then
+      purge_downloads="true"
+    fi
+  fi
+
+  if [[ -f "${baseline}" ]]; then
+    cp -f "${baseline}" "${inv_file}"
+    ok "Restored inventory-growth from baseline backup: ${baseline}"
+  else
+    warn "No inventory baseline backup found at ${baseline}; inventory-growth was not restored."
+  fi
+
+  if [[ -f "${ENV_FILE}" ]]; then
+    rm -f "${ENV_FILE}"
+    ok "Removed installer environment file: ${ENV_FILE}"
+  else
+    log "INFO" "No installer environment file present at ${ENV_FILE}."
+  fi
+
+  if [[ "${purge_downloads}" == "true" ]]; then
+    if [[ -d "${install_dir}" ]]; then
+      rm -rf "${install_dir}"
+      ok "Removed extracted bundle directory: ${install_dir}"
+    fi
+    if [[ -f "${DOWNLOAD_DIR}/${BUNDLE_FILE}" ]]; then
+      rm -f "${DOWNLOAD_DIR}/${BUNDLE_FILE}"
+      ok "Removed downloaded bundle archive: ${DOWNLOAD_DIR}/${BUNDLE_FILE}"
+    fi
+  else
+    log "INFO" "Bundle artifacts were retained. Set AAP_CLEANUP_PURGE_DOWNLOADS=true in ${ENV_FILE} to auto-remove them."
+  fi
+}
+
+should_run_post_uninstall_cleanup() {
+  local reply
+
+  load_env
+  if [[ "${AAP_AUTO_CLEANUP_ON_UNINSTALL:-}" =~ ^([Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|1)$ ]]; then
+    return 0
+  fi
+
+  if [[ ! -t 0 ]]; then
+    return 1
+  fi
+
+  read -r -p "Run post-uninstall cleanup of script-managed changes (restore inventory + clear env file)? [y/N]: " reply
+  [[ "${reply:-N}" =~ ^[Yy]$ ]]
+}
+
 ensure_registry_credentials() {
   load_env
 
@@ -672,6 +756,7 @@ ensure_registry_credentials() {
 
 get_preferred_remote_user() {
   local selected_user use_admin selected_uid
+  local -a fallback_candidates
 
   load_env
 
@@ -692,6 +777,32 @@ get_preferred_remote_user() {
     selected_user="admin"
   else
     warn "admin user does not exist on this host." >&2
+
+    fallback_candidates=("${SUDO_USER:-}" "${USER:-}")
+    for selected_user in "${fallback_candidates[@]}"; do
+      [[ -z "${selected_user}" ]] && continue
+      if ! id "${selected_user}" >/dev/null 2>&1; then
+        continue
+      fi
+      selected_uid="$(id -u "${selected_user}" 2>/dev/null || echo 0)"
+      if [[ "${selected_uid}" == "0" ]]; then
+        continue
+      fi
+
+      warn "Using fallback remote user '${selected_user}' because admin is unavailable." >&2
+      break
+    done
+
+    if [[ -n "${selected_user:-}" ]] && id "${selected_user}" >/dev/null 2>&1; then
+      selected_uid="$(id -u "${selected_user}" 2>/dev/null || echo 0)"
+      if [[ "${selected_uid}" != "0" ]]; then
+        AAP_REMOTE_USER="${selected_user}"
+        save_env_kv "AAP_REMOTE_USER" "${AAP_REMOTE_USER}"
+        printf '%s' "${AAP_REMOTE_USER}"
+        return
+      fi
+    fi
+
     if [[ ! -t 0 ]]; then
       err "Cannot prompt for AAP remote user in non-interactive mode. Set AAP_REMOTE_USER to an existing non-root user in ${ENV_FILE}." >&2
       return 1
@@ -807,6 +918,8 @@ modify_inventory_growth() {
     return 1
   fi
 
+  ensure_inventory_baseline_backup "${inv_file}"
+
   if [[ -z "${admin_password}" ]]; then
     warn "ADMIN_PASSWORD not found in environment file; prompting now."
     read_secret_prompt admin_password "Enter platform admin password for inventory values"
@@ -852,6 +965,7 @@ enforce_inventory_runtime_settings() {
   local target_fqdn target_domain host_line remote_user controller_user controller_home controller_key known_hosts_file escaped_admin_password
   ensure_registry_credentials
   load_env
+  ensure_inventory_baseline_backup "${inv_file}"
   remote_user="$(get_preferred_remote_user)"
   controller_user="$(get_controller_user)"
   controller_home="$(get_user_home "${controller_user}")"
@@ -917,12 +1031,15 @@ run_execution_playbook() {
   local playbook_name="$1"
   local install_dir
   local runtime_host_line runtime_user runtime_become runtime_conn runtime_redis_mode remote_user controller_user controller_home controller_key
+  local playbook_rc
   local -a ansible_cmd
   install_dir="${DOWNLOAD_DIR}/${BUNDLE_DIR_NAME}"
   remote_user="$(get_preferred_remote_user)"
   controller_user="$(get_controller_user)"
   controller_home="$(get_user_home "${controller_user}")"
   controller_key="$(get_controller_ssh_key)"
+
+  log "INFO" "Step 10 selection: playbook=${playbook_name}, remote_user=${remote_user}, controller_user=${controller_user}"
 
   if [[ ! -d "${install_dir}" ]]; then
     err "Installation directory missing: ${install_dir}"
@@ -995,6 +1112,17 @@ run_execution_playbook() {
       env ANSIBLE_DEPRECATION_WARNINGS=False "${ansible_cmd[@]}"
     fi
   )
+  playbook_rc=$?
+
+  if [[ "${playbook_name}" == "uninstall" && "${playbook_rc}" -eq 0 ]]; then
+    if should_run_post_uninstall_cleanup; then
+      run_post_uninstall_cleanup "${install_dir}"
+    else
+      log "INFO" "Post-uninstall cleanup skipped. Set AAP_AUTO_CLEANUP_ON_UNINSTALL=true in ${ENV_FILE} to auto-run it."
+    fi
+  fi
+
+  return "${playbook_rc}"
 }
 
 run_install() {
