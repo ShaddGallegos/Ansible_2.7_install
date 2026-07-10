@@ -8,6 +8,7 @@
     bundle_dir: "/home/admin/Downloads/ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64"
     inventory_file: "{{ bundle_dir }}/inventory-growth"
     target_fqdn: "{{ target_fqdn | default(default_fqdn) }}"
+    remote_user: "{{ remote_user | default(machine_credential_username | default('admin')) }}"
     admin_password: "{{ admin_password | default('') }}"
     rhsm_username: "{{ rhsm_username | default(registry_username) }}"
     rhsm_password: "{{ rhsm_password | default(registry_password) }}"
@@ -22,6 +23,12 @@
       - uninstall
 
   tasks:
+    - name: Ensure requested remote user is non-root
+      ansible.builtin.assert:
+        that:
+          - remote_user != 'root'
+        fail_msg: "remote_user must be non-root for ansible.containerized_installer preflight checks"
+
     - name: Validate inventory-growth exists
       ansible.builtin.stat:
         path: "{{ inventory_file }}"
@@ -36,7 +43,13 @@
       ansible.builtin.replace:
         path: "{{ inventory_file }}"
         regexp: 'aap\.example\.(com|org)'
-        replace: 'aap ansible_host={{ ansible_default_ipv4.address }} real_hostname={{ ansible_hostname }} ansible_user=admin ansible_ssh_private_key_file=/home/admin/.ssh/id_ed25519'
+        replace: 'aap ansible_host={{ ansible_default_ipv4.address }} real_hostname={{ ansible_hostname }} ansible_user={{ remote_user }} ansible_ssh_private_key_file=/home/{{ remote_user }}/.ssh/id_ed25519'
+
+    - name: Normalize non-vars host lines for runtime user and host identity
+      ansible.builtin.replace:
+        path: "{{ inventory_file }}"
+        regexp: '^(?!#|\[|\s*$).+$'
+        replace: '{{ target_fqdn }} ansible_host={{ ansible_default_ipv4.address }} real_hostname={{ ansible_hostname }} ansible_user={{ remote_user }} ansible_ssh_private_key_file=/home/{{ remote_user }}/.ssh/id_ed25519'
 
     - name: Replace installer password placeholder
       ansible.builtin.replace:
@@ -66,8 +79,9 @@
           pg_admin_password='{{ admin_password }}'
           registry_username='{{ rhsm_username }}'
           registry_password='{{ rhsm_password }}'
-          ansible_user='admin'
+          ansible_user='{{ remote_user }}'
           ansible_become='true'
+          ansible_connection='ssh'
 
     - name: Validate requested execution playbook
       ansible.builtin.assert:
