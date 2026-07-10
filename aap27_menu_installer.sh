@@ -1098,11 +1098,12 @@ get_inventory_var() {
 run_execution_playbook() {
   local playbook_name="$1"
   local install_dir
-  local runtime_host_line runtime_user runtime_become runtime_conn runtime_redis_mode remote_user controller_user controller_home controller_key
+  local runtime_host_line runtime_user runtime_become runtime_conn runtime_redis_mode remote_user remote_uid controller_user controller_home controller_key
   local playbook_rc
   local -a ansible_cmd
   install_dir="${DOWNLOAD_DIR}/${BUNDLE_DIR_NAME}"
   remote_user="$(get_preferred_remote_user)"
+  remote_uid="$(id -u "${remote_user}" 2>/dev/null || echo 1000)"
   controller_user="$(get_controller_user)"
   controller_home="$(get_user_home "${controller_user}")"
   controller_key="$(get_controller_ssh_key)"
@@ -1149,6 +1150,8 @@ run_execution_playbook() {
       ssh
       -e
       "ansible_user=${remote_user}"
+      -e
+      "ansible_user_uid=${remote_uid}"
       -e
       ansible_become=true
       -e

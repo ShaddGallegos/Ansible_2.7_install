@@ -9,6 +9,7 @@
     inventory_file: "{{ bundle_dir }}/inventory-growth"
     target_fqdn: "{{ target_fqdn | default(default_fqdn) }}"
     remote_user: "{{ remote_user | default(machine_credential_username | default('admin')) }}"
+    remote_user_uid: "{{ lookup('ansible.builtin.pipe', 'id -u ' ~ remote_user) | default('1000', true) }}"
     admin_password: "{{ admin_password | default('') }}"
     rhsm_username: "{{ rhsm_username | default(registry_username) }}"
     rhsm_password: "{{ rhsm_password | default(registry_password) }}"
@@ -105,6 +106,8 @@
           - ssh
           - -e
           - "ansible_user={{ remote_user }}"
+          - -e
+          - "ansible_user_uid={{ remote_user_uid }}"
           - -e
           - ansible_become=true
           - -e
