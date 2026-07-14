@@ -158,9 +158,55 @@ ensure_subid_entry() {
   printf '%s:%s:%s\n' "${user_name}" "${start_id}" "${range_size}" | run_privileged tee -a "${subid_file}" >/dev/null
 }
 
+run_as_user() {
+  local user_name="$1"
+  shift
+
+  if [[ ${EUID} -eq 0 ]] && command -v runuser >/dev/null 2>&1; then
+    runuser -u "${user_name}" -- "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo -u "${user_name}" "$@"
+  else
+    return 1
+  fi
+}
+
+ensure_user_dbus_session() {
+  local user_name="$1"
+  local user_uid bus_path i
+
+  if ! command -v loginctl >/dev/null 2>&1; then
+    warn "loginctl not found; cannot ensure lingering user DBus session for ${user_name}."
+    return 1
+  fi
+
+  user_uid="$(id -u "${user_name}" 2>/dev/null || true)"
+  if [[ -z "${user_uid}" ]]; then
+    warn "Unable to resolve UID for ${user_name}."
+    return 1
+  fi
+
+  run_privileged loginctl enable-linger "${user_name}" >/dev/null 2>&1 || warn "Unable to enable lingering for ${user_name}."
+  run_privileged systemctl start "user@${user_uid}.service" >/dev/null 2>&1 || warn "Unable to start user@${user_uid}.service"
+
+  bus_path="/run/user/${user_uid}/bus"
+  for i in {1..30}; do
+    if [[ -S "${bus_path}" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  warn "Timed out waiting for user DBus socket at ${bus_path}."
+  return 1
+}
+
 setup_admin_rootless_podman() {
-  if ! id admin >/dev/null 2>&1; then
-    warn "admin user does not exist; skipping rootless podman setup."
+  local target_user="${1:-admin}"
+  local target_uid xdg_runtime dbus_addr
+
+  if ! id "${target_user}" >/dev/null 2>&1; then
+    warn "${target_user} user does not exist; skipping rootless podman setup."
     return 0
   fi
 
@@ -169,24 +215,34 @@ setup_admin_rootless_podman() {
     return 0
   fi
 
-  ensure_subid_entry /etc/subuid admin 100000 65536
-  ensure_subid_entry /etc/subgid admin 100000 65536
+  ensure_subid_entry /etc/subuid "${target_user}" 100000 65536
+  ensure_subid_entry /etc/subgid "${target_user}" 100000 65536
 
-  if command -v loginctl >/dev/null 2>&1; then
-    run_privileged loginctl enable-linger admin >/dev/null 2>&1 || warn "Unable to enable lingering for admin."
+  target_uid="$(id -u "${target_user}" 2>/dev/null || echo 1000)"
+  xdg_runtime="/run/user/${target_uid}"
+  dbus_addr="unix:path=${xdg_runtime}/bus"
+
+  ensure_user_dbus_session "${target_user}" || true
+
+  if run_as_user "${target_user}" env XDG_RUNTIME_DIR="${xdg_runtime}" DBUS_SESSION_BUS_ADDRESS="${dbus_addr}" podman system migrate >/dev/null 2>&1; then
+    :
+  else
+    warn "podman system migrate returned non-zero for ${target_user}."
   fi
 
-  if [[ ${EUID} -eq 0 ]] && command -v runuser >/dev/null 2>&1; then
-    runuser -u admin -- podman system migrate >/dev/null 2>&1 || true
-  elif command -v sudo >/dev/null 2>&1; then
-    sudo -u admin podman system migrate >/dev/null 2>&1 || true
+  if run_as_user "${target_user}" env XDG_RUNTIME_DIR="${xdg_runtime}" DBUS_SESSION_BUS_ADDRESS="${dbus_addr}" systemctl --user enable --now podman.socket >/dev/null 2>&1; then
+    :
+  else
+    warn "Unable to enable podman.socket for ${target_user} user scope."
   fi
 
-  ok "Rootless podman setup ensured for admin."
+  ok "Rootless podman setup ensured for ${target_user}."
 }
 
 login_registry_as_admin() {
-  local login_user login_pass
+  local login_user login_pass target_user target_uid xdg_runtime dbus_addr
+
+  target_user="${3:-admin}"
 
   login_user="${1:-${RHSM_USERNAME:-${CDN_USERNAME:-${REDHAT_USERNAME:-${CONSOLE_USERNAME:-}}}}}"
   login_pass="${2:-${RHSM_PASSWORD:-${CDN_PASSWORD:-${REDHAT_PASSWORD:-${CONSOLE_PASSWORD:-}}}}}"
@@ -197,8 +253,8 @@ login_registry_as_admin() {
     login_pass="${login_pass:-${RHSM_PASSWORD:-${CDN_PASSWORD:-${REDHAT_PASSWORD:-${CONSOLE_PASSWORD:-}}}}}"
   fi
 
-  if ! id admin >/dev/null 2>&1; then
-    warn "admin user does not exist; skipping registry.redhat.io login."
+  if ! id "${target_user}" >/dev/null 2>&1; then
+    warn "${target_user} user does not exist; skipping registry.redhat.io login."
     return 0
   fi
 
@@ -212,20 +268,16 @@ login_registry_as_admin() {
     return 0
   fi
 
-  if [[ ${EUID} -eq 0 ]] && command -v runuser >/dev/null 2>&1; then
-    if printf '%s\n' "${login_pass}" | runuser -u admin -- podman login registry.redhat.io --username "${login_user}" --password-stdin >/dev/null 2>&1; then
-      ok "registry.redhat.io login succeeded for admin (rootless podman)."
-    else
-      warn "registry.redhat.io login failed for admin. Verify RHSM credentials."
-    fi
-  elif command -v sudo >/dev/null 2>&1; then
-    if printf '%s\n' "${login_pass}" | sudo -u admin podman login registry.redhat.io --username "${login_user}" --password-stdin >/dev/null 2>&1; then
-      ok "registry.redhat.io login succeeded for admin (rootless podman)."
-    else
-      warn "registry.redhat.io login failed for admin. Verify RHSM credentials."
-    fi
+  target_uid="$(id -u "${target_user}" 2>/dev/null || echo 1000)"
+  xdg_runtime="/run/user/${target_uid}"
+  dbus_addr="unix:path=${xdg_runtime}/bus"
+
+  ensure_user_dbus_session "${target_user}" || true
+
+  if run_as_user "${target_user}" env XDG_RUNTIME_DIR="${xdg_runtime}" DBUS_SESSION_BUS_ADDRESS="${dbus_addr}" bash -lc "printf '%s\\n' \"${login_pass}\" | podman login registry.redhat.io --username \"${login_user}\" --password-stdin" >/dev/null 2>&1; then
+    ok "registry.redhat.io login succeeded for ${target_user} (rootless podman)."
   else
-    warn "Neither runuser nor sudo available; skipping registry.redhat.io login."
+    warn "registry.redhat.io login failed for ${target_user}. Verify RHSM credentials."
   fi
 }
 
@@ -1221,7 +1273,8 @@ run_execution_playbook() {
   fi
 
   enforce_inventory_runtime_settings "${install_dir}/inventory-growth"
-  login_registry_as_admin
+  setup_admin_rootless_podman "${remote_user}"
+  login_registry_as_admin "${RHSM_USERNAME:-}" "${RHSM_PASSWORD:-}" "${remote_user}"
 
   runtime_host_line="$(awk '/^[[:space:]]*#/ || /^\[/ || /^[[:space:]]*$/ { next } { print; exit }' "${install_dir}/inventory-growth")"
   runtime_user="$(get_inventory_var "${install_dir}/inventory-growth" "ansible_user")"

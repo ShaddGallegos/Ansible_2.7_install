@@ -7,6 +7,7 @@ Use this checklist before running the installer or the AAP workflow project.
 - [x] Workflow prework now configures rootless podman for the runtime `remote_user` (not hardcoded `admin`).
 - [x] Workflow prework now starts `user@<uid>` and waits for `/run/user/<uid>/bus` to avoid `systemctl --user` DBus failures.
 - [x] Workflow install now validates `remote_user` matches `machine_credential_username` to fail early with actionable output.
+- [x] Menu installer Step 10 now auto-prepares runtime user DBus session and enables `podman.socket` before running `ansible.containerized_installer`.
 
 ## Accounts, Tokens, and Credentials
 
