@@ -287,6 +287,7 @@ show_checklist() {
 AAP 2.7-2 INSTALLATION CHECKLIST
 ================================
 Execute steps in the order shown:
+ 1. Run preflight dependency checks (Podman + core tools)
  2. Install required prework packages
  3. Configure firewalld/SELinux for installation mode
  4. Configure host identity (FQDN/domain + /etc/hosts)
@@ -309,6 +310,46 @@ Tip: enter step? for contextual guidance (example: 6?)
 Launch as admin is supported; privileged operations use sudo internally.
 EOF
   pause_enter
+}
+
+preflight_dependency_checks() {
+  local -a required_cmds
+  local -a missing_cmds
+
+  required_cmds=(bash awk sed grep tar curl)
+  missing_cmds=()
+
+  log "Running Step 1 preflight dependency checks."
+
+  for cmd in "${required_cmds[@]}"; do
+    if ! command -v "${cmd}" >/dev/null 2>&1; then
+      missing_cmds+=("${cmd}")
+    fi
+  done
+
+  if (( ${#missing_cmds[@]} > 0 )); then
+    warn "Missing basic tools: ${missing_cmds[*]}"
+  else
+    ok "Basic shell dependencies are present."
+  fi
+
+  if command -v podman >/dev/null 2>&1; then
+    ok "podman is installed: $(podman --version 2>/dev/null || echo detected)"
+  else
+    warn "podman is not installed."
+    if command -v dnf >/dev/null 2>&1; then
+      log "Installing podman automatically via dnf."
+      run_privileged dnf -y install podman || warn "Failed to install podman via dnf."
+    else
+      warn "dnf not found; install podman manually before Step 10."
+    fi
+  fi
+
+  if command -v podman >/dev/null 2>&1; then
+    ok "Preflight complete: podman available."
+  else
+    warn "Preflight complete with warnings: podman still missing."
+  fi
 }
 
 show_step_help() {
@@ -1413,17 +1454,18 @@ menu() {
     cat <<'EOF'
 AAP 2.7-2 Production Installer Assistant
 ========================================
-1) View installation checklist
-2) Install required prework packages
-3) Apply installation firewall/SELinux settings
-4) Configure host identity (FQDN/domain + /etc/hosts)
-5) Provision admin user (NOPASSWD sudo + SSH keys)
-6) Capture RHSM credentials and tokens
-7) Download setup bundle
-8) Extract setup bundle
-9) Update inventory-growth
-10) Execute playbook (submenu)
-11) View installation status
+1) Run preflight dependency checks
+2) View installation checklist
+3) Install required prework packages
+4) Apply installation firewall/SELinux settings
+5) Configure host identity (FQDN/domain + /etc/hosts)
+6) Provision admin user (NOPASSWD sudo + SSH keys)
+7) Capture RHSM credentials and tokens
+8) Download setup bundle
+9) Extract setup bundle
+10) Update inventory-growth
+11) Execute playbook (submenu)
+12) View installation status
 0) Exit
 
 Enter step? for contextual guidance (example: 6?)
@@ -1431,26 +1473,27 @@ EOF
 
     read -r -p "Select menu option: " choice
     case "${choice}" in
-      1) show_checklist ;;
-      2) prework_packages; pause_enter ;;
-      2\?) show_step_help 2 ;;
-      3) disable_firewall_selinux; pause_enter ;;
-      3\?) show_step_help 3 ;;
-      4) set_fqdn_and_hosts; pause_enter ;;
-      4\?) show_step_help 4 ;;
-      5) setup_admin_user; pause_enter ;;
-      5\?) show_step_help 5 ;;
-      6) capture_credentials; pause_enter ;;
-      6\?) show_step_help 6 ;;
-      7) download_bundle; pause_enter ;;
-      7\?) show_step_help 7 ;;
-      8) extract_bundle; pause_enter ;;
-      8\?) show_step_help 8 ;;
-      9) modify_inventory_growth; pause_enter ;;
-      9\?) show_step_help 9 ;;
-      10) run_install; pause_enter ;;
-      10\?) show_step_help 10 ;;
-      11) show_status ;;
+      1) preflight_dependency_checks; pause_enter ;;
+      2) show_checklist ;;
+      3) prework_packages; pause_enter ;;
+      3\?) show_step_help 2 ;;
+      4) disable_firewall_selinux; pause_enter ;;
+      4\?) show_step_help 3 ;;
+      5) set_fqdn_and_hosts; pause_enter ;;
+      5\?) show_step_help 4 ;;
+      6) setup_admin_user; pause_enter ;;
+      6\?) show_step_help 5 ;;
+      7) capture_credentials; pause_enter ;;
+      7\?) show_step_help 6 ;;
+      8) download_bundle; pause_enter ;;
+      8\?) show_step_help 7 ;;
+      9) extract_bundle; pause_enter ;;
+      9\?) show_step_help 8 ;;
+      10) modify_inventory_growth; pause_enter ;;
+      10\?) show_step_help 9 ;;
+      11) run_install; pause_enter ;;
+      11\?) show_step_help 10 ;;
+      12) show_status ;;
       0) exit 0 ;;
       *) warn "Invalid menu option."; pause_enter ;;
     esac
