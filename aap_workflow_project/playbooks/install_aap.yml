@@ -6,14 +6,17 @@
 
   vars:
     bundle_dir: "/home/admin/Downloads/ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64"
-    inventory_file: "{{ bundle_dir }}/inventory-growth"
+    installer_inventory_file: "{{ bundle_dir }}/inventory-growth"
     target_fqdn: "{{ target_fqdn | default(default_fqdn) }}"
-    remote_user: "{{ remote_user | default(machine_credential_username | default('admin')) }}"
-    remote_user_uid: "{{ lookup('ansible.builtin.pipe', 'id -u ' ~ remote_user) | default('1000', true) }}"
+    installer_remote_user: "{{ remote_user | default(machine_credential_username | default('admin')) }}"
+    remote_user_uid: "1000"
     admin_password: "{{ admin_password | default('') }}"
     rhsm_username: "{{ rhsm_username | default(registry_username) }}"
     rhsm_password: "{{ rhsm_password | default(registry_password) }}"
     execution_playbook: "{{ execution_playbook | default('install') }}"
+    runtime_host_line: >-
+      ansible_host={{ ansible_default_ipv4.address }} real_hostname={{ ansible_hostname }}
+      ansible_user={{ installer_remote_user }} ansible_ssh_private_key_file=/home/{{ installer_remote_user }}/.ssh/id_ed25519
     allowed_execution_playbooks:
       - install
       - backup
@@ -27,54 +30,61 @@
     - name: Ensure requested remote user is non-root
       ansible.builtin.assert:
         that:
-          - remote_user != 'root'
+          - installer_remote_user != 'root'
         fail_msg: "remote_user must be non-root for ansible.containerized_installer preflight checks"
+
+    - name: Ensure survey remote_user matches machine credential username
+      ansible.builtin.assert:
+        that:
+          - machine_credential_username is not defined or installer_remote_user == machine_credential_username
+        fail_msg: >-
+          remote_user '{{ installer_remote_user }}' must match machine_credential_username
+          '{{ machine_credential_username | default('undefined') }}' so SSH user,
+          rootless podman setup, and installer runtime remain aligned.
 
     - name: Validate inventory-growth exists
       ansible.builtin.stat:
-        path: "{{ inventory_file }}"
+        path: "{{ installer_inventory_file }}"
       register: inv_stat
 
     - name: Fail when inventory-growth missing
       ansible.builtin.fail:
-        msg: "inventory-growth not found at {{ inventory_file }}"
+        msg: "inventory-growth not found at {{ installer_inventory_file }}"
       when: not inv_stat.stat.exists
 
     - name: Replace example hostnames globally
       ansible.builtin.replace:
-        path: "{{ inventory_file }}"
+        path: "{{ installer_inventory_file }}"
         regexp: "aap\\.example\\.(com|org)"
-        replace: "aap ansible_host={{ ansible_default_ipv4.address }} real_hostname={{ ansible_hostname }} ansible_user={{ remote_user }} ansible_ssh_private_key_file=/home/{{
-          remote_user }}/.ssh/id_ed25519"
+        replace: "aap {{ runtime_host_line }}"
 
     - name: Normalize non-vars host lines for runtime user and host identity
       ansible.builtin.replace:
-        path: "{{ inventory_file }}"
+        path: "{{ installer_inventory_file }}"
         regexp: "^(?!#|\\[|\\s*$).+$"
-        replace: "{{ target_fqdn }} ansible_host={{ ansible_default_ipv4.address }} real_hostname={{ ansible_hostname }} ansible_user={{ remote_user }} ansible_ssh_private_key_file=/home/{{
-          remote_user }}/.ssh/id_ed25519"
+        replace: "{{ target_fqdn }} {{ runtime_host_line }}"
 
     - name: Replace installer password placeholder
       ansible.builtin.replace:
-        path: "{{ inventory_file }}"
+        path: "{{ installer_inventory_file }}"
         regexp: "password=<set your own>"
         replace: "password={{ admin_password }}"
 
     - name: Enable collections
       ansible.builtin.replace:
-        path: "{{ inventory_file }}"
+        path: "{{ installer_inventory_file }}"
         regexp: "collections=false"
         replace: "collections=true"
 
     - name: Ensure [all:vars] exists
       ansible.builtin.lineinfile:
-        path: "{{ inventory_file }}"
+        path: "{{ installer_inventory_file }}"
         line: "[all:vars]"
         state: present
 
     - name: Set required all:vars entries
       ansible.builtin.blockinfile:
-        path: "{{ inventory_file }}"
+        path: "{{ installer_inventory_file }}"
         marker: "# {mark} MANAGED BY AAP WORKFLOW"
         insertafter: "^\\[all:vars\\]$"
         block: |
@@ -82,7 +92,7 @@
           pg_admin_password='{{ admin_password }}'
           registry_username='{{ rhsm_username }}'
           registry_password='{{ rhsm_password }}'
-          ansible_user='{{ remote_user }}'
+          ansible_user='{{ installer_remote_user }}'
           ansible_become='true'
           ansible_become_method='sudo'
           ansible_connection='ssh'
@@ -95,6 +105,32 @@
           execution_playbook '{{ execution_playbook }}' is invalid. Allowed values:
           {{ allowed_execution_playbooks | join(', ') }}
 
+    - name: Resolve remote user UID on target host
+      ansible.builtin.command: id -u {{ installer_remote_user }}
+      register: remote_user_uid_cmd
+      changed_when: false
+
+    - name: Set runtime remote user UID
+      ansible.builtin.set_fact:
+        remote_user_uid: "{{ remote_user_uid_cmd.stdout | default('1000', true) }}"
+
+    - name: Enable lingering for runtime remote user
+      ansible.builtin.command: loginctl enable-linger {{ installer_remote_user }}
+      changed_when: false
+      failed_when: false
+
+    - name: Ensure user manager is running for runtime remote user
+      ansible.builtin.systemd:
+        name: "user@{{ remote_user_uid }}"
+        state: started
+      failed_when: false
+
+    - name: Wait for runtime user DBus socket
+      ansible.builtin.wait_for:
+        path: "/run/user/{{ remote_user_uid }}/bus"
+        timeout: 30
+      failed_when: false
+
     - name: Run selected AAP containerized playbook
       become: true
       become_user: admin
@@ -104,11 +140,11 @@
           - -i
           - inventory-growth
           - -u
-          - "{{ remote_user }}"
+          - "{{ installer_remote_user }}"
           - -c
           - ssh
           - -e
-          - "ansible_user={{ remote_user }}"
+          - "ansible_user={{ installer_remote_user }}"
           - -e
           - "ansible_user_uid={{ remote_user_uid }}"
           - -e
