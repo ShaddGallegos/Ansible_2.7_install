@@ -43,26 +43,28 @@
     - name: Replace example hostnames globally
       ansible.builtin.replace:
         path: "{{ inventory_file }}"
-        regexp: 'aap\.example\.(com|org)'
-        replace: 'aap ansible_host={{ ansible_default_ipv4.address }} real_hostname={{ ansible_hostname }} ansible_user={{ remote_user }} ansible_ssh_private_key_file=/home/{{ remote_user }}/.ssh/id_ed25519'
+        regexp: "aap\\.example\\.(com|org)"
+        replace: "aap ansible_host={{ ansible_default_ipv4.address }} real_hostname={{ ansible_hostname }} ansible_user={{ remote_user }} ansible_ssh_private_key_file=/home/{{
+          remote_user }}/.ssh/id_ed25519"
 
     - name: Normalize non-vars host lines for runtime user and host identity
       ansible.builtin.replace:
         path: "{{ inventory_file }}"
-        regexp: '^(?!#|\[|\s*$).+$'
-        replace: '{{ target_fqdn }} ansible_host={{ ansible_default_ipv4.address }} real_hostname={{ ansible_hostname }} ansible_user={{ remote_user }} ansible_ssh_private_key_file=/home/{{ remote_user }}/.ssh/id_ed25519'
+        regexp: "^(?!#|\\[|\\s*$).+$"
+        replace: "{{ target_fqdn }} ansible_host={{ ansible_default_ipv4.address }} real_hostname={{ ansible_hostname }} ansible_user={{ remote_user }} ansible_ssh_private_key_file=/home/{{
+          remote_user }}/.ssh/id_ed25519"
 
     - name: Replace installer password placeholder
       ansible.builtin.replace:
         path: "{{ inventory_file }}"
-        regexp: 'password=<set your own>'
-        replace: 'password={{ admin_password }}'
+        regexp: "password=<set your own>"
+        replace: "password={{ admin_password }}"
 
     - name: Enable collections
       ansible.builtin.replace:
         path: "{{ inventory_file }}"
-        regexp: 'collections=false'
-        replace: 'collections=true'
+        regexp: "collections=false"
+        replace: "collections=true"
 
     - name: Ensure [all:vars] exists
       ansible.builtin.lineinfile:
@@ -74,7 +76,7 @@
       ansible.builtin.blockinfile:
         path: "{{ inventory_file }}"
         marker: "# {mark} MANAGED BY AAP WORKFLOW"
-        insertafter: '^\[all:vars\]$'
+        insertafter: "^\\[all:vars\\]$"
         block: |
           admin_password='{{ admin_password }}'
           pg_admin_password='{{ admin_password }}'
@@ -94,6 +96,7 @@
           {{ allowed_execution_playbooks | join(', ') }}
 
     - name: Run selected AAP containerized playbook
+      become: true
       become_user: admin
       ansible.builtin.command:
         argv:

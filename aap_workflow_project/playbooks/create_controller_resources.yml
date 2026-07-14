@@ -2,8 +2,6 @@
 - name: Create AAP controller resources for workflow install
   hosts: controller
   gather_facts: false
-  collections:
-    - awx.awx
 
   vars:
     controller_host: "{{ aap_controller_host }}"

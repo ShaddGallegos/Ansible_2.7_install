@@ -9,6 +9,7 @@
     set_selinux_permissive_for_install: "{{ set_selinux_permissive_for_install | default(true) }}"
     effective_registry_username: "{{ rhsm_username | default(registry_username | default('')) }}"
     effective_registry_password: "{{ rhsm_password | default(registry_password | default('')) }}"
+    installer_user: "{{ remote_user | default(machine_credential_username | default('admin')) }}"
 
   tasks:
     - name: Install required packages (best effort)
@@ -29,50 +30,68 @@
         state: present
       when: ansible_os_family == "RedHat"
 
-    - name: Ensure admin user exists for rootless podman
+    - name: Ensure installer user exists for rootless podman
       ansible.builtin.user:
-        name: admin
+        name: "{{ installer_user }}"
         shell: /bin/bash
         create_home: true
         state: present
 
-    - name: Ensure subuid entry exists for admin
+    - name: Ensure subuid entry exists for installer user
       ansible.builtin.lineinfile:
         path: /etc/subuid
-        regexp: '^admin:'
-        line: 'admin:100000:65536'
+        regexp: "^{{ installer_user }}:"
+        line: "{{ installer_user }}:100000:65536"
         create: true
+        mode: "0644"
         state: present
 
-    - name: Ensure subgid entry exists for admin
+    - name: Ensure subgid entry exists for installer user
       ansible.builtin.lineinfile:
         path: /etc/subgid
-        regexp: '^admin:'
-        line: 'admin:100000:65536'
+        regexp: "^{{ installer_user }}:"
+        line: "{{ installer_user }}:100000:65536"
         create: true
+        mode: "0644"
         state: present
 
-    - name: Enable lingering for admin
-      ansible.builtin.command: loginctl enable-linger admin
+    - name: Enable lingering for installer user
+      ansible.builtin.command: loginctl enable-linger {{ installer_user }}
       changed_when: false
       failed_when: false
 
-    - name: Get admin UID
-      ansible.builtin.command: id -u admin
-      register: admin_uid
+    - name: Get installer user UID
+      ansible.builtin.command: id -u {{ installer_user }}
+      register: installer_uid
       changed_when: false
 
-    - name: Run podman system migrate for admin
-      become_user: admin
+    - name: Ensure user manager is running for installer user
+      ansible.builtin.systemd:
+        name: "user@{{ installer_uid.stdout }}"
+        state: started
+      failed_when: false
+
+    - name: Wait for installer user DBus socket
+      ansible.builtin.wait_for:
+        path: "/run/user/{{ installer_uid.stdout }}/bus"
+        timeout: 30
+      failed_when: false
+
+    - name: Run podman system migrate for installer user
+      become: true
+      become_user: "{{ installer_user }}"
       ansible.builtin.command: podman system migrate
       changed_when: false
       failed_when: false
       environment:
-        XDG_RUNTIME_DIR: "/run/user/{{ admin_uid.stdout }}"
+        XDG_RUNTIME_DIR: "/run/user/{{ installer_uid.stdout }}"
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ installer_uid.stdout }}/bus"
 
-    - name: Login to registry.redhat.io as admin (rootless podman)
-      become_user: admin
+    - name: Login to registry.redhat.io as installer user (rootless podman)
+      become: true
+      become_user: "{{ installer_user }}"
       ansible.builtin.shell: |
+        set -o pipefail
         printf '%s\n' {{ effective_registry_password | quote }} | \
         podman login registry.redhat.io --username {{ effective_registry_username | quote }} --password-stdin
       args:
@@ -81,7 +100,8 @@
       changed_when: false
       failed_when: false
       environment:
-        XDG_RUNTIME_DIR: "/run/user/{{ admin_uid.stdout }}"
+        XDG_RUNTIME_DIR: "/run/user/{{ installer_uid.stdout }}"
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ installer_uid.stdout }}/bus"
       when:
         - effective_registry_username | length > 0
         - effective_registry_password | length > 0
@@ -102,6 +122,6 @@
     - name: Set SELinux config permissive
       ansible.builtin.replace:
         path: /etc/selinux/config
-        regexp: '^SELINUX=.*'
-        replace: 'SELINUX=permissive'
+        regexp: "^SELINUX=.*"
+        replace: "SELINUX=permissive"
       when: set_selinux_permissive_for_install | bool
