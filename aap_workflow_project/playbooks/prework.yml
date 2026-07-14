@@ -25,6 +25,7 @@
           - jq
           - rsync
           - podman
+          - podman-docker
           - python3
           - python3-pip
         state: present
@@ -77,6 +78,34 @@
         timeout: 30
       failed_when: false
 
+    - name: Enable rootless podman socket for installer user
+      become: true
+      become_user: "{{ installer_user }}"
+      ansible.builtin.systemd_service:
+        name: podman.socket
+        enabled: true
+        state: started
+        scope: user
+      failed_when: false
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ installer_uid.stdout }}"
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ installer_uid.stdout }}/bus"
+
+    - name: Ensure DOCKER_HOST compatibility variable in installer user .bashrc
+      ansible.builtin.lineinfile:
+        path: "/home/{{ installer_user }}/.bashrc"
+        regexp: '^export DOCKER_HOST="unix://\$XDG_RUNTIME_DIR/podman/podman.sock"$'
+        line: 'export DOCKER_HOST="unix://$XDG_RUNTIME_DIR/podman/podman.sock"'
+        create: true
+        mode: "0644"
+
+    - name: Enable rootful podman socket service
+      ansible.builtin.systemd:
+        name: podman.socket
+        enabled: true
+        state: started
+      failed_when: false
+
     - name: Run podman system migrate for installer user
       become: true
       become_user: "{{ installer_user }}"
@@ -105,6 +134,12 @@
       when:
         - effective_registry_username | length > 0
         - effective_registry_password | length > 0
+
+    - name: Show podman socket configuration summary
+      ansible.builtin.debug:
+        msg:
+          - "rootless podman.socket requested for {{ installer_user }}"
+          - "rootful podman.socket requested for system scope"
 
     - name: Disable firewalld for installation
       ansible.builtin.systemd:

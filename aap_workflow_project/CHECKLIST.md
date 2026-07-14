@@ -5,6 +5,8 @@
 - [x] Prework configures rootless podman for runtime `remote_user` (survey value), not only `admin`.
 - [x] Prework enables linger, starts `user@<uid>`, and waits for `/run/user/<uid>/bus` before installer execution.
 - [x] Install playbook validates survey `remote_user` and `machine_credential_username` alignment.
+- [x] Prework configures rootless `podman.socket` for installer user and rootful `podman.socket` for system scope.
+- [x] Prework ensures `DOCKER_HOST` compatibility export in installer user `.bashrc`.
 
 ## Controller Access
 

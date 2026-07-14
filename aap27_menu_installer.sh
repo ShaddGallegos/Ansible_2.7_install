@@ -1448,12 +1448,78 @@ show_status() {
   pause_enter
 }
 
-menu() {
+run_quick_standard_install_flow() {
+  local apply_relaxed_security
+
+  log "Quick flow: Step 1 preflight checks"
+  preflight_dependency_checks
+
+  log "Quick flow: Step 3 prework packages"
+  prework_packages
+
+  read -r -p "Quick flow: apply installation firewall/SELinux relaxations (lab mode)? [y/N]: " apply_relaxed_security
+  if [[ "${apply_relaxed_security:-N}" =~ ^[Yy]$ ]]; then
+    log "Quick flow: Step 4 firewall/SELinux relaxations"
+    disable_firewall_selinux
+  else
+    log "Quick flow: skipping firewall/SELinux relaxations (production-safe default)."
+  fi
+
+  log "Quick flow: Step 5 host identity"
+  set_fqdn_and_hosts
+
+  log "Quick flow: Step 6 admin user"
+  setup_admin_user
+
+  log "Quick flow: Step 7 credentials and tokens"
+  capture_credentials
+
+  log "Quick flow: Step 8 bundle download"
+  download_bundle
+
+  log "Quick flow: Step 9 bundle extraction"
+  extract_bundle
+
+  log "Quick flow: Step 10 inventory update"
+  modify_inventory_growth
+
+  log "Quick flow complete. Launching execution playbook submenu."
+  run_install
+}
+
+inspect_menu() {
+  local choice
+
   while true; do
     clear
     cat <<'EOF'
-AAP 2.7-2 Production Installer Assistant
-========================================
+Inspect
+=======
+1) View installation checklist
+2) View installation status
+3) View checklist, then status
+0) Back
+EOF
+
+    read -r -p "Select inspect option: " choice
+    case "${choice}" in
+      1) show_checklist ;;
+      2) show_status ;;
+      3) show_checklist; show_status ;;
+      0) return 0 ;;
+      *) warn "Invalid inspect option."; pause_enter ;;
+    esac
+  done
+}
+
+advanced_menu() {
+  local choice
+
+  while true; do
+    clear
+    cat <<'EOF'
+Advanced Step-by-Step Menu
+==========================
 1) Run preflight dependency checks
 2) View installation checklist
 3) Install required prework packages
@@ -1466,12 +1532,12 @@ AAP 2.7-2 Production Installer Assistant
 10) Update inventory-growth
 11) Execute playbook (submenu)
 12) View installation status
-0) Exit
+0) Back to main menu
 
 Enter step? for contextual guidance (example: 6?)
 EOF
 
-    read -r -p "Select menu option: " choice
+    read -r -p "Select advanced option: " choice
     case "${choice}" in
       1) preflight_dependency_checks; pause_enter ;;
       2) show_checklist ;;
@@ -1494,6 +1560,50 @@ EOF
       11) run_install; pause_enter ;;
       11\?) show_step_help 10 ;;
       12) show_status ;;
+      0) return 0 ;;
+      *) warn "Invalid advanced option."; pause_enter ;;
+    esac
+  done
+}
+
+menu() {
+  local choice
+
+  while true; do
+    clear
+    cat <<'EOF'
+AAP 2.7-2 Production Installer Assistant
+========================================
+1) Quick standard install flow
+2) Run preflight dependency checks
+3) Prepare host (packages, identity, admin user, credentials)
+4) Prepare bundle (download, extract, update inventory)
+5) Execute playbook (submenu)
+6) Inspect (checklist/status)
+7) Advanced step-by-step menu
+0) Exit
+EOF
+
+    read -r -p "Select menu option: " choice
+    case "${choice}" in
+      1) run_quick_standard_install_flow; pause_enter ;;
+      2) preflight_dependency_checks; pause_enter ;;
+      3)
+        prework_packages
+        set_fqdn_and_hosts
+        setup_admin_user
+        capture_credentials
+        pause_enter
+        ;;
+      4)
+        download_bundle
+        extract_bundle
+        modify_inventory_growth
+        pause_enter
+        ;;
+      5) run_install; pause_enter ;;
+      6) inspect_menu ;;
+      7) advanced_menu ;;
       0) exit 0 ;;
       *) warn "Invalid menu option."; pause_enter ;;
     esac

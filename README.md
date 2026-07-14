@@ -11,13 +11,14 @@ This folder contains a menu-driven bash helper for preparing and installing Red 
 
 - Shows a checklist and readiness status with links.
 - Provides contextual guidance per step (for example: `6?`).
+- Runs Step 1 preflight checks and auto-installs `podman` when missing.
 - Performs common prework for AAP installs.
 - Configures host identity requirements (FQDN, domain, `/etc/hosts`).
 - Optionally disables firewall and sets SELinux to permissive for install workflows.
 - Creates and configures an `admin` user with passwordless sudo and SSH keys.
 - Captures required credentials/tokens and stores them in a local env file with restricted permissions.
-- Logs `admin` into `registry.redhat.io` using RHSM credentials.
-- Configures rootless podman for `admin` (`/etc/subuid`, `/etc/subgid`, linger, migrate).
+- Logs runtime installer user into `registry.redhat.io` using RHSM credentials.
+- Configures rootless podman for runtime installer user (`/etc/subuid`, `/etc/subgid`, linger, user bus, `podman.socket`, migrate).
 - Downloads the AAP 2.7-2 containerized bundle to `/home/admin/Downloads/`.
 - Extracts the bundle and updates `inventory-growth` with requested values.
 - Runs selected execution playbooks from `ansible.containerized_installer`:
