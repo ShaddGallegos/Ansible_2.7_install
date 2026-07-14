@@ -2,6 +2,12 @@
 
 Use this checklist before running the installer or the AAP workflow project.
 
+## Repository Automation Completed
+
+- [x] Workflow prework now configures rootless podman for the runtime `remote_user` (not hardcoded `admin`).
+- [x] Workflow prework now starts `user@<uid>` and waits for `/run/user/<uid>/bus` to avoid `systemctl --user` DBus failures.
+- [x] Workflow install now validates `remote_user` matches `machine_credential_username` to fail early with actionable output.
+
 ## Accounts, Tokens, and Credentials
 
 - [ ] RHSM username/password
@@ -27,8 +33,8 @@ Use this checklist before running the installer or the AAP workflow project.
 - [ ] `admin` has passwordless sudo (`/etc/sudoers.d/admin`)
 - [ ] SSH keys created for `admin`
 - [ ] `admin` key copied to target node(s)
-- [ ] Rootless podman is configured for `admin` (`/etc/subuid`, `/etc/subgid`)
-- [ ] `podman login registry.redhat.io` succeeds for `admin`
+- [ ] Rootless podman is configured for installer `remote_user` (`/etc/subuid`, `/etc/subgid`, linger)
+- [ ] `podman login registry.redhat.io` succeeds for installer `remote_user`
 
 ## Platform Components
 

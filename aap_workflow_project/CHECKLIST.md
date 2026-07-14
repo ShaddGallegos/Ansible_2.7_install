@@ -1,5 +1,11 @@
 # Workflow Project Checklist
 
+## Repository Automation Completed
+
+- [x] Prework configures rootless podman for runtime `remote_user` (survey value), not only `admin`.
+- [x] Prework enables linger, starts `user@<uid>`, and waits for `/run/user/<uid>/bus` before installer execution.
+- [x] Install playbook validates survey `remote_user` and `machine_credential_username` alignment.
+
 ## Controller Access
 
 - [ ] `aap_controller_host` is reachable
@@ -21,8 +27,8 @@
 - [ ] Inventory contains target install host
 - [ ] Machine credential for target host created
 - [ ] Machine credential username is non-root (for example `admin`)
-- [ ] Rootless podman prepared for `admin` (`/etc/subuid`, `/etc/subgid`, linger)
-- [ ] Registry login valid for `admin` (`registry.redhat.io`)
+- [ ] Rootless podman prepared for installer `remote_user` (`/etc/subuid`, `/etc/subgid`, linger)
+- [ ] Registry login valid for installer `remote_user` (`registry.redhat.io`)
 - [ ] Job templates created and linked
 - [ ] Surveys reviewed and adjusted for your environment
 
