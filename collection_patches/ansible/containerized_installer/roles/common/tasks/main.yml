@@ -110,6 +110,30 @@
       ansible.builtin.package:
         name: "{{ common_podman_packages_effective }}"
       register: common_container_tools_retry
+      failed_when: false
+
+    - name: Detect runc package unavailability after retry
+      ansible.builtin.set_fact:
+        common_container_tools_missing_runc: >-
+          {{
+            'No package runc available' in (common_container_tools_retry.msg | default(''))
+            or 'No package runc available' in ((common_container_tools_retry.failures | default([])) | join(' '))
+          }}
+      changed_when: false
+
+    - name: Retry container tools installation without runc
+      ansible.builtin.package:
+        name: "{{ common_podman_packages_effective | reject('equalto', 'runc') | list }}"
+      when:
+        - common_container_tools_retry is failed
+        - common_container_tools_missing_runc | bool
+
+    - name: Fail container tools installation when retry error is not missing runc
+      ansible.builtin.fail:
+        msg: "{{ common_container_tools_retry.msg | default('Failed to install container tools package set') }}"
+      when:
+        - common_container_tools_retry is failed
+        - not (common_container_tools_missing_runc | bool)
 
     - name: Disable temporary repos used for container tools retry
       ansible.builtin.command:
