@@ -172,6 +172,23 @@ run_as_user() {
   fi
 }
 
+ensure_user_home_ownership() {
+  local user_name="$1"
+  local user_home
+
+  if ! id "${user_name}" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  user_home="$(getent passwd "${user_name}" | cut -d: -f6 || true)"
+  user_home="${user_home:-/home/${user_name}}"
+
+  if [[ -d "${user_home}" ]]; then
+    run_privileged chown -R "${user_name}:${user_name}" "${user_home}" 2>/dev/null || warn "Unable to fully correct ownership under ${user_home}."
+    run_privileged chmod 700 "${user_home}" 2>/dev/null || true
+  fi
+}
+
 ensure_user_dbus_session() {
   local user_name="$1"
   local user_uid bus_path i
@@ -204,7 +221,7 @@ ensure_user_dbus_session() {
 
 setup_admin_rootless_podman() {
   local target_user="${1:-admin}"
-  local target_uid xdg_runtime dbus_addr
+  local target_uid xdg_runtime dbus_addr target_home
 
   if ! id "${target_user}" >/dev/null 2>&1; then
     warn "${target_user} user does not exist; skipping rootless podman setup."
@@ -220,18 +237,20 @@ setup_admin_rootless_podman() {
   ensure_subid_entry /etc/subgid "${target_user}" 100000 65536
 
   target_uid="$(id -u "${target_user}" 2>/dev/null || echo 1000)"
+  target_home="$(get_user_home "${target_user}")"
   xdg_runtime="/run/user/${target_uid}"
   dbus_addr="unix:path=${xdg_runtime}/bus"
 
+  ensure_user_home_ownership "${target_user}"
   ensure_user_dbus_session "${target_user}" || true
 
-  if run_as_user "${target_user}" env XDG_RUNTIME_DIR="${xdg_runtime}" DBUS_SESSION_BUS_ADDRESS="${dbus_addr}" podman system migrate >/dev/null 2>&1; then
+  if run_as_user "${target_user}" env HOME="${target_home}" XDG_RUNTIME_DIR="${xdg_runtime}" DBUS_SESSION_BUS_ADDRESS="${dbus_addr}" podman system migrate >/dev/null 2>&1; then
     :
   else
     warn "podman system migrate returned non-zero for ${target_user}."
   fi
 
-  if run_as_user "${target_user}" env XDG_RUNTIME_DIR="${xdg_runtime}" DBUS_SESSION_BUS_ADDRESS="${dbus_addr}" systemctl --user enable --now podman.socket >/dev/null 2>&1; then
+  if run_as_user "${target_user}" env HOME="${target_home}" XDG_RUNTIME_DIR="${xdg_runtime}" DBUS_SESSION_BUS_ADDRESS="${dbus_addr}" systemctl --user enable --now podman.socket >/dev/null 2>&1; then
     :
   else
     warn "Unable to enable podman.socket for ${target_user} user scope."
@@ -241,7 +260,7 @@ setup_admin_rootless_podman() {
 }
 
 login_registry_as_admin() {
-  local login_user login_pass target_user target_uid xdg_runtime dbus_addr
+  local login_user login_pass target_user target_uid xdg_runtime dbus_addr target_home current_login
 
   target_user="${3:-admin}"
 
@@ -270,12 +289,20 @@ login_registry_as_admin() {
   fi
 
   target_uid="$(id -u "${target_user}" 2>/dev/null || echo 1000)"
+  target_home="$(get_user_home "${target_user}")"
   xdg_runtime="/run/user/${target_uid}"
   dbus_addr="unix:path=${xdg_runtime}/bus"
 
+  ensure_user_home_ownership "${target_user}"
   ensure_user_dbus_session "${target_user}" || true
 
-  if run_as_user "${target_user}" env XDG_RUNTIME_DIR="${xdg_runtime}" DBUS_SESSION_BUS_ADDRESS="${dbus_addr}" bash -lc "printf '%s\\n' \"${login_pass}\" | podman login registry.redhat.io --username \"${login_user}\" --password-stdin" >/dev/null 2>&1; then
+  current_login="$(run_as_user "${target_user}" env HOME="${target_home}" XDG_RUNTIME_DIR="${xdg_runtime}" DBUS_SESSION_BUS_ADDRESS="${dbus_addr}" podman login --get-login registry.redhat.io 2>/dev/null || true)"
+  if [[ "${current_login}" == "${login_user}" ]]; then
+    ok "registry.redhat.io login already valid for ${target_user} (${login_user})."
+    return 0
+  fi
+
+  if run_as_user "${target_user}" env HOME="${target_home}" XDG_RUNTIME_DIR="${xdg_runtime}" DBUS_SESSION_BUS_ADDRESS="${dbus_addr}" bash -lc "printf '%s\\n' \"${login_pass}\" | podman login registry.redhat.io --username \"${login_user}\" --password-stdin" >/dev/null 2>&1; then
     ok "registry.redhat.io login succeeded for ${target_user} (rootless podman)."
   else
     warn "registry.redhat.io login failed for ${target_user} using ${login_user}. Verify RHSM credentials."
