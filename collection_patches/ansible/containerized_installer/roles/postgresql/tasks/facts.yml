@@ -8,6 +8,43 @@
     _postgresql_ips: '{{ _postgresql_ips | default([]) | union(["IP:" + item]) }}'
   loop: "{{ ansible_all_ipv4_addresses + ansible_all_ipv6_addresses }}"
 
+- name: Ensure local tls pem directory exists for postgresql bundle mount
+  ansible.builtin.file:
+    path: '{{ _ca_tls_dir }}/extracted/pem'
+    state: directory
+    mode: '0750'
+
+- name: Check generated tls CA bundle file for postgresql
+  ansible.builtin.stat:
+    path: '{{ _ca_tls_dir }}/extracted/pem/tls-ca-bundle.pem'
+  register: postgresql_generated_ca_bundle
+
+- name: Check host system CA bundle file
+  ansible.builtin.stat:
+    path: /etc/pki/tls/certs/ca-bundle.crt
+  register: postgresql_host_ca_bundle
+  when: not postgresql_generated_ca_bundle.stat.exists | bool
+
+- name: Seed postgresql CA bundle file from host CA bundle when missing
+  ansible.builtin.copy:
+    src: /etc/pki/tls/certs/ca-bundle.crt
+    dest: '{{ _ca_tls_dir }}/extracted/pem/tls-ca-bundle.pem'
+    remote_src: true
+    mode: '0644'
+  when:
+    - not postgresql_generated_ca_bundle.stat.exists | bool
+    - postgresql_host_ca_bundle.stat.exists | bool
+
+- name: Seed postgresql CA bundle file from installer CA certificate as fallback
+  ansible.builtin.copy:
+    src: '{{ _ca_tls_dir }}/ca.cert'
+    dest: '{{ _ca_tls_dir }}/extracted/pem/tls-ca-bundle.pem'
+    remote_src: true
+    mode: '0644'
+  when:
+    - not postgresql_generated_ca_bundle.stat.exists | bool
+    - not postgresql_host_ca_bundle.stat.exists | bool
+
 - name: Set postgresql volumes
   ansible.builtin.set_fact:
     postgresql_secrets:
