@@ -61,8 +61,8 @@
   block:
     - name: Set effective podman package/runtime values
       ansible.builtin.set_fact:
-        common_podman_packages_effective: "{{ (podman_packages + ['runc']) | unique }}"
-        common_podman_runtime_effective: runc
+        common_podman_packages_effective: "{{ podman_packages }}"
+        common_podman_runtime_effective: "{{ podman_runtime }}"
       changed_when: false
 
     - name: Install container tools package set
@@ -114,12 +114,26 @@
     mode: "0755"
 
 - name: Configure podman runtime
-  ansible.builtin.template:
-    src: containers.conf.j2
-    dest: "{{ ansible_user_dir }}/.config/containers/containers.conf"
-    mode: "0644"
-  vars:
-    podman_runtime: "{{ common_podman_runtime_effective | default(podman_runtime) }}"
+  block:
+    - name: Detect runc runtime availability
+      ansible.builtin.command:
+        cmd: command -v runc
+      register: common_runc_binary
+      changed_when: false
+      failed_when: false
+
+    - name: Set effective podman runtime value
+      ansible.builtin.set_fact:
+        common_podman_runtime_effective: "{{ 'runc' if common_runc_binary.rc == 0 else podman_runtime }}"
+      changed_when: false
+
+    - name: Render containers runtime configuration
+      ansible.builtin.template:
+        src: containers.conf.j2
+        dest: "{{ ansible_user_dir }}/.config/containers/containers.conf"
+        mode: "0644"
+      vars:
+        podman_runtime: "{{ common_podman_runtime_effective | default(podman_runtime) }}"
 
 - name: Configure podman execution plane
   ansible.builtin.include_tasks: executionplane.yml
