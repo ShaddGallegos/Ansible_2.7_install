@@ -122,6 +122,67 @@ save_env_kv() {
   fi
 }
 
+normalize_ansible_verbosity() {
+  local raw_value="${1:-}"
+
+  case "${raw_value}" in
+    ""|0|none|NONE)
+      printf ''
+      ;;
+    1|v|-v)
+      printf '%s' '-v'
+      ;;
+    2|vv|-vv)
+      printf '%s' '-vv'
+      ;;
+    3|vvv|-vvv)
+      printf '%s' '-vvv'
+      ;;
+    *)
+      printf ''
+      ;;
+  esac
+}
+
+configure_ansible_verbosity() {
+  local choice selected_flag
+
+  load_env
+  selected_flag="$(normalize_ansible_verbosity "${ANSIBLE_VERBOSITY:-}")"
+
+  clear
+  cat <<EOF
+Ansible Verbosity
+=================
+Current verbosity: ${selected_flag:-none}
+
+1) none
+2) -v
+3) -vv
+4) -vvv
+0) Keep current
+EOF
+
+  read -r -p "Select verbosity level: " choice
+  case "${choice}" in
+    1) ANSIBLE_VERBOSITY="" ;;
+    2) ANSIBLE_VERBOSITY="-v" ;;
+    3) ANSIBLE_VERBOSITY="-vv" ;;
+    4) ANSIBLE_VERBOSITY="-vvv" ;;
+    0|"")
+      log "Keeping current verbosity: ${selected_flag:-none}"
+      return 0
+      ;;
+    *)
+      warn "Invalid verbosity option. Keeping current value."
+      return 0
+      ;;
+  esac
+
+  save_env_kv "ANSIBLE_VERBOSITY" "${ANSIBLE_VERBOSITY}"
+  ok "Ansible verbosity set to: ${ANSIBLE_VERBOSITY:-none}"
+}
+
 ensure_public_key_authorized() {
   local user_name="$1"
   local pubkey_file="$2"
@@ -1440,9 +1501,12 @@ run_execution_playbook() {
   local playbook_name="$1"
   local install_dir
   local runtime_host_line runtime_user runtime_become runtime_conn runtime_redis_mode remote_user remote_uid controller_user controller_home controller_key
+  local ansible_verbosity
   local playbook_rc
   local -a ansible_cmd
   install_dir="${DOWNLOAD_DIR}/${BUNDLE_DIR_NAME}"
+  load_env
+  ansible_verbosity="$(normalize_ansible_verbosity "${ANSIBLE_VERBOSITY:-}")"
   remote_user="$(get_preferred_remote_user)"
   remote_uid="$(id -u "${remote_user}" 2>/dev/null || echo 1000)"
   controller_user="$(get_controller_user)"
@@ -1475,6 +1539,7 @@ run_execution_playbook() {
   log "INFO" "Runtime inventory host line: ${runtime_host_line:-<not-found>}"
   log "INFO" "Runtime inventory vars: ansible_connection=${runtime_conn:-unset}, ansible_user=${runtime_user:-unset}, ansible_become=${runtime_become:-unset}"
   log "INFO" "Runtime inventory redis_mode=${runtime_redis_mode:-unset}"
+  log "INFO" "Runtime ansible verbosity=${ansible_verbosity:-none}"
 
   if id "${controller_user}" >/dev/null 2>&1; then
     chown -R "${controller_user}:${controller_user}" "${install_dir}" 2>/dev/null || true
@@ -1520,6 +1585,10 @@ run_execution_playbook() {
       warn "Controller SSH key not found: ${controller_key}. SSH may fail unless agent/password auth is configured."
     fi
 
+    if [[ -n "${ansible_verbosity}" ]]; then
+      ansible_cmd+=("${ansible_verbosity}")
+    fi
+
     if [[ "${USER:-}" == "${controller_user}" ]]; then
       env ANSIBLE_DEPRECATION_WARNINGS=False "${ansible_cmd[@]}"
     elif [[ ${EUID} -eq 0 ]] && command -v runuser >/dev/null 2>&1 && id "${controller_user}" >/dev/null 2>&1; then
@@ -1559,6 +1628,7 @@ Step 10 - Execution Playbooks
 5) log_gathering
 6) restore
 7) uninstall
+8) Set Ansible verbosity (-v/-vv/-vvv)
 0) Return to main menu
 EOF
 
@@ -1571,6 +1641,7 @@ EOF
       5) playbook_name="log_gathering" ;;
       6) playbook_name="restore" ;;
       7) playbook_name="uninstall" ;;
+      8) configure_ansible_verbosity; pause_enter; continue ;;
       0) return 0 ;;
       *) warn "Invalid execution playbook option."; pause_enter; continue ;;
     esac
