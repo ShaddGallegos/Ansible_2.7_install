@@ -1,0 +1,52 @@
+---
+- name: Configure RHEL host for container subscription pass-through
+  hosts: all
+  become: true
+  vars:
+    # Set to true to fail fast when the host is not currently subscribed.
+    enforce_subscription: true
+
+  tasks:
+    - name: Check RHEL host subscription status
+      ansible.builtin.command: subscription-manager status
+      register: rhsm_status
+      changed_when: false
+      failed_when: >-
+        enforce_subscription and
+        ('Overall Status: Current' not in ((rhsm_status.stdout | default('')) ~ ' ' ~ (rhsm_status.stderr | default(''))))
+      ignore_errors: "{{ not enforce_subscription }}"
+
+    - name: Display subscription warning if host is not registered
+      ansible.builtin.debug:
+        msg: "WARNING: This host is not properly subscribed. Pass-through will not work."
+      when: >-
+        'Overall Status: Current' not in ((rhsm_status.stdout | default('')) ~ ' ' ~ (rhsm_status.stderr | default('')))
+
+    - name: Ensure /etc/containers directory exists
+      ansible.builtin.file:
+        path: /etc/containers
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Configure subscription certificate pass-through paths in mounts.conf
+      ansible.builtin.blockinfile:
+        path: /etc/containers/mounts.conf
+        create: true
+        owner: root
+        group: root
+        mode: "0644"
+        marker: "# {mark} ANSIBLE MANAGED RHEL SUBSCRIPTION MOUNTS"
+        block: |
+          /etc/pki/entitlement:/etc/pki/entitlement
+          /usr/share/rhel/secrets:/usr/share/rhel/secrets
+
+    - name: Verify podman can see AppStream repo package metadata in container
+      ansible.builtin.command: >-
+        podman run --rm registry.access.redhat.com/ubi9/ubi
+        dnf repoquery --info runc
+      register: podman_test
+      changed_when: false
+      failed_when: >-
+        'rhel-9-for-x86_64-appstream-rpms' not in ((podman_test.stdout | default('')) ~ ' ' ~ (podman_test.stderr | default('')))
