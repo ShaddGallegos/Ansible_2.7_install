@@ -9,6 +9,8 @@ fi
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
 BUNDLE_FILE="ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64.tar.gz"
 BUNDLE_URL_DEFAULT="https://access.cdn.redhat.com/content/origin/files/sha256/5c/5c0e1834c1ae609ce840865b5aa279b5c5bde9118856b326f77cc5c8bf92d9af/ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64.tar.gz"
 BUNDLE_DIR_NAME="ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64"
@@ -420,7 +422,7 @@ patch_containerized_installer_user_bus_task() {
   local install_dir="$1"
   local patch_root target_root relative_file source_file target_file
 
-  patch_root="${PWD}/collection_patches/ansible/containerized_installer"
+  patch_root="${SCRIPT_DIR}/collection_patches/ansible/containerized_installer"
   target_root="${install_dir}/collections/ansible_collections/ansible/containerized_installer"
 
   if [[ ! -d "${patch_root}" ]]; then
