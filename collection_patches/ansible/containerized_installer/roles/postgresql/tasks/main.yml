@@ -51,8 +51,57 @@
   when:
     - postgresql_service_active.rc != 0 or postgresql_service_enabled.rc != 0
 
+- name: Start postgresql container on database node
+  containers.podman.podman_container:
+    name: postgresql
+    state: started
+  register: postgresql_container_start
+  failed_when: false
+
+- name: Verify postgresql container is running on database node
+  containers.podman.podman_container_info:
+    name: postgresql
+  register: postgresql_container_runtime_info
+  changed_when: false
+  failed_when: false
+  retries: 12
+  delay: 5
+  until:
+    - postgresql_container_runtime_info.containers is defined
+    - postgresql_container_runtime_info.containers | length > 0
+    - postgresql_container_runtime_info.containers[0].State.Running | default(false) | bool
+
+- name: Gather postgresql container status when not running
+  ansible.builtin.command:
+    cmd: "podman ps -a --filter name=postgresql --format '{{ '{{.Names}} {{.Status}}' }}'"
+  register: postgresql_container_status
+  changed_when: false
+  failed_when: false
+  when: not (postgresql_container_runtime_info.containers[0].State.Running | default(false) | bool)
+
+- name: Gather postgresql container logs when not running
+  ansible.builtin.command:
+    cmd: podman logs --tail 200 postgresql
+  register: postgresql_container_logs
+  changed_when: false
+  failed_when: false
+  when: not (postgresql_container_runtime_info.containers[0].State.Running | default(false) | bool)
+
+- name: Fail when postgresql container is not running on database node
+  ansible.builtin.fail:
+    msg: |
+      postgresql container is not running on this database node.
+      Service active rc: {{ postgresql_service_active.rc | default('n/a') }}
+      Service enabled rc: {{ postgresql_service_enabled.rc | default('n/a') }}
+      Container start rc: {{ postgresql_container_start.rc | default('n/a') }}
+      Container status:
+      {{ postgresql_container_status.stdout | default('n/a') }}
+
+      Container logs (tail 200):
+      {{ postgresql_container_logs.stdout | default('n/a') }}
+  when: not (postgresql_container_runtime_info.containers[0].State.Running | default(false) | bool)
+
 - name: Add firewalld rules
   ansible.builtin.include_tasks: firewalld.yml
   vars:
     __firewalld_state: enabled
-...
