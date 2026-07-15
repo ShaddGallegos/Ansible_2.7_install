@@ -141,6 +141,12 @@
       {{ (common_ca_cert_before.stat.checksum | default(''))
          != (common_ca_cert_after.stat.checksum | default('')) }}
 
+- name: Export legacy CA certificate changed fact for role compatibility
+  ansible.builtin.set_fact:
+    "{{ common_legacy_ca_cert_changed_var }}": "{{ common_ca_cert_changed }}"
+  vars:
+    common_legacy_ca_cert_changed_var: _ca_cert_changed
+
 - name: Set volumes for updating the CA trust
   ansible.builtin.set_fact:
     common_ca_volumes:
