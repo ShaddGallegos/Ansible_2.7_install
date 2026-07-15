@@ -1551,6 +1551,13 @@ run_execution_playbook() {
     cd "${install_dir}"
     ansible_cmd=(
       ansible-playbook
+    )
+
+    if [[ -n "${ansible_verbosity}" ]]; then
+      ansible_cmd+=("${ansible_verbosity}")
+    fi
+
+    ansible_cmd+=(
       -i
       inventory-growth
       -u
@@ -1583,10 +1590,6 @@ run_execution_playbook() {
       ansible_cmd+=(-e "ansible_ssh_private_key_file=${controller_key}")
     else
       warn "Controller SSH key not found: ${controller_key}. SSH may fail unless agent/password auth is configured."
-    fi
-
-    if [[ -n "${ansible_verbosity}" ]]; then
-      ansible_cmd+=("${ansible_verbosity}")
     fi
 
     if [[ "${USER:-}" == "${controller_user}" ]]; then
