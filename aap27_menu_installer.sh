@@ -1421,8 +1421,9 @@ modify_inventory_growth() {
   upsert_inventory_var "${inv_file}" "registry_username" "${RHSM_USERNAME:-}"
   upsert_inventory_var "${inv_file}" "registry_password" "${RHSM_PASSWORD:-}"
   upsert_inventory_var "${inv_file}" "ansible_user" "${remote_user}"
-  upsert_inventory_var "${inv_file}" "ansible_become" "false"
+  upsert_inventory_var "${inv_file}" "ansible_become" "true"
   upsert_inventory_var "${inv_file}" "ansible_become_method" "sudo"
+  upsert_inventory_var "${inv_file}" "ansible_user_dir" "/home/${remote_user}"
   upsert_inventory_var "${inv_file}" "ansible_connection" "ssh"
   upsert_inventory_var "${inv_file}" "redis_mode" "standalone"
 
@@ -1477,8 +1478,9 @@ enforce_inventory_runtime_settings() {
   fi
 
   upsert_inventory_var "${inv_file}" "ansible_user" "${remote_user}"
-  upsert_inventory_var "${inv_file}" "ansible_become" "false"
+  upsert_inventory_var "${inv_file}" "ansible_become" "true"
   upsert_inventory_var "${inv_file}" "ansible_become_method" "sudo"
+  upsert_inventory_var "${inv_file}" "ansible_user_dir" "/home/${remote_user}"
   upsert_inventory_var "${inv_file}" "ansible_connection" "ssh"
   upsert_inventory_var "${inv_file}" "ansible_ssh_common_args" "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
   upsert_inventory_var "${inv_file}" "registry_username" "${RHSM_USERNAME:-}"
