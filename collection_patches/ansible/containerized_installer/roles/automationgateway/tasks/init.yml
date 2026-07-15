@@ -1,8 +1,37 @@
 ---
 - name: Ensure automation gateway container is running before initialization
-  containers.podman.podman_container:
-    name: automation-gateway
-    state: started
+  block:
+    - name: Start automation gateway container
+      containers.podman.podman_container:
+        name: automation-gateway
+        state: started
+      become: false
+      run_once: true
+  rescue:
+    - name: Recreate automation gateway containers after start failure
+      ansible.builtin.include_tasks: containers.yml
+      run_once: true
+
+    - name: Retry start automation gateway container after recreate
+      containers.podman.podman_container:
+        name: automation-gateway
+        state: started
+      become: false
+      run_once: true
+      register: automationgateway_start_retry
+      failed_when: false
+
+    - name: Fail when gateway container still does not start
+      ansible.builtin.fail:
+        msg: "{{ automationgateway_start_retry.msg | default('Container automation-gateway failed to start after recreate') }}"
+      when: automationgateway_start_retry.msg is search('exited with code')
+
+- name: Verify automation gateway container is running
+  ansible.builtin.command:
+    cmd: podman inspect -f {{ '{{' }}.State.Running{{ '}}' }} automation-gateway
+  register: automationgateway_running_state
+  changed_when: false
+  failed_when: automationgateway_running_state.stdout | trim != 'true'
   become: false
   run_once: true
 

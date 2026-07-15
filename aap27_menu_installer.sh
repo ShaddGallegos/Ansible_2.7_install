@@ -420,7 +420,7 @@ login_registry_as_admin() {
 
 patch_containerized_installer_user_bus_task() {
   local install_dir="$1"
-  local patch_root target_root relative_file source_file target_file runtime_tasks_file
+  local patch_root target_root relative_file source_file target_file runtime_tasks_file gateway_containers_file
 
   patch_root="${SCRIPT_DIR}/collection_patches/ansible/containerized_installer"
   target_root="${install_dir}/collections/ansible_collections/ansible/containerized_installer"
@@ -452,6 +452,13 @@ patch_containerized_installer_user_bus_task() {
   if [[ -f "${runtime_tasks_file}" ]] && grep -Fq 'podman_runtime: "{{ common_podman_runtime_effective | default(podman_runtime) }}"' "${runtime_tasks_file}"; then
     sed -i 's#podman_runtime: "{{ common_podman_runtime_effective | default(podman_runtime) }}"#podman_runtime: "{{ common_podman_runtime_effective }}"#g' "${runtime_tasks_file}"
     ok "Patched runtime template recursion guard in roles/common/tasks/main.yml"
+  fi
+
+  gateway_containers_file="${target_root}/roles/automationgateway/tasks/containers.yml"
+  if [[ -f "${gateway_containers_file}" ]] && grep -Fq 'userns: keep-id' "${gateway_containers_file}"; then
+    sed -i '/^[[:space:]]*user: "{{ ansible_user_uid }}"$/d' "${gateway_containers_file}"
+    sed -i '/^[[:space:]]*userns: keep-id$/d' "${gateway_containers_file}"
+    ok "Patched stale gateway keep-id settings in roles/automationgateway/tasks/containers.yml"
   fi
 }
 
