@@ -281,6 +281,71 @@ login_registry_as_admin() {
   fi
 }
 
+patch_containerized_installer_user_bus_task() {
+  local install_dir="$1"
+  local task_file tmp_file
+
+  task_file="${install_dir}/collections/ansible_collections/ansible/containerized_installer/roles/common/tasks/executionplane.yml"
+
+  if [[ ! -f "${task_file}" ]]; then
+    warn "Containerized installer task file not found for user-bus patch: ${task_file}"
+    return 0
+  fi
+
+  if grep -q 'DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ ansible_user_uid }}/bus"' "${task_file}"; then
+    log "INFO" "Containerized installer user-bus patch already present."
+    return 0
+  fi
+
+  tmp_file="${task_file}.tmp"
+  awk '
+    function flush_block() {
+      if (in_target) {
+        if (block !~ /DBUS_SESSION_BUS_ADDRESS:/) {
+          block = block task_indent "  # MANAGED BY AAP27 INSTALLER\n"
+          block = block task_indent "  environment:\n"
+          block = block task_indent "    XDG_RUNTIME_DIR: \"/run/user/{{ ansible_user_uid }}\"\n"
+          block = block task_indent "    DBUS_SESSION_BUS_ADDRESS: \"unix:path=/run/user/{{ ansible_user_uid }}/bus\"\n"
+          patched = 1
+        }
+        printf "%s", block
+      }
+      block = ""
+      in_target = 0
+      task_indent = ""
+    }
+
+    /^[[:space:]]*-[[:space:]]name:[[:space:]]+Enable podman socket[[:space:]]*$/ {
+      flush_block()
+      in_target = 1
+      match($0, /^[[:space:]]*/)
+      task_indent = substr($0, RSTART, RLENGTH)
+      block = $0 "\n"
+      next
+    }
+
+    in_target && /^[[:space:]]*-[[:space:]]name:[[:space:]]+/ {
+      flush_block()
+    }
+
+    if (in_target) {
+      block = block $0 "\n"
+      next
+    }
+
+    print
+  END {
+      flush_block()
+    }
+  ' "${task_file}" > "${tmp_file}" && mv "${tmp_file}" "${task_file}"
+
+  if grep -q 'DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ ansible_user_uid }}/bus"' "${task_file}"; then
+    ok "Patched containerized installer podman socket task for user DBus environment."
+  else
+    warn "Did not confirm user-bus patch in ${task_file}."
+  fi
+}
+
 show_checklist() {
   clear
   cat <<'EOF'
@@ -1313,6 +1378,7 @@ run_execution_playbook() {
     return 1
   fi
 
+  patch_containerized_installer_user_bus_task "${install_dir}"
   enforce_inventory_runtime_settings "${install_dir}/inventory-growth"
   setup_admin_rootless_podman "${remote_user}"
   login_registry_as_admin "${RHSM_USERNAME:-}" "${RHSM_PASSWORD:-}" "${remote_user}"
