@@ -71,6 +71,19 @@ run_as_user() {
   fi
 }
 
+ensure_user_home_ownership() {
+  local user="$1"
+  local user_home
+
+  user_home="$(getent passwd "$user" | cut -d: -f6 || true)"
+  user_home="${user_home:-/home/${user}}"
+
+  [[ -d "$user_home" ]] || return 0
+
+  chown -R "$user:$user" "$user_home" 2>/dev/null || warn "Could not fully correct ownership under $user_home"
+  chmod 700 "$user_home" 2>/dev/null || true
+}
+
 wait_for_bus() {
   local uid="$1"
   local timeout="${2:-30}"
@@ -152,12 +165,17 @@ id "$TARGET_USER" >/dev/null 2>&1 || die "User does not exist: $TARGET_USER"
 [[ "$TARGET_USER" != "root" ]] || die "Target user must be non-root"
 
 TARGET_UID="$(id -u "$TARGET_USER")"
+TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6 || true)"
+TARGET_HOME="${TARGET_HOME:-/home/${TARGET_USER}}"
 XDG_RUNTIME_DIR="/run/user/${TARGET_UID}"
 DBUS_ADDR="unix:path=${XDG_RUNTIME_DIR}/bus"
 
 log "Configuring /etc/subuid and /etc/subgid for ${TARGET_USER}"
 upsert_subid /etc/subuid "$TARGET_USER" "$SUBID_START" "$SUBID_RANGE"
 upsert_subid /etc/subgid "$TARGET_USER" "$SUBID_START" "$SUBID_RANGE"
+
+log "Ensuring ${TARGET_USER} home ownership is correct"
+ensure_user_home_ownership "$TARGET_USER"
 
 log "Enabling linger for ${TARGET_USER}"
 loginctl enable-linger "$TARGET_USER" >/dev/null 2>&1 || warn "loginctl enable-linger failed"
@@ -172,6 +190,7 @@ fi
 
 log "Running podman system migrate for ${TARGET_USER}"
 run_as_user "$TARGET_USER" env \
+  HOME="$TARGET_HOME" \
   XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
   DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDR" \
   podman system migrate >/dev/null 2>&1 || warn "podman system migrate returned non-zero"
@@ -179,6 +198,7 @@ run_as_user "$TARGET_USER" env \
 if [[ "$ENABLE_PODMAN_SOCKET" == "true" ]]; then
   log "Enabling podman.socket for ${TARGET_USER}"
   run_as_user "$TARGET_USER" env \
+    HOME="$TARGET_HOME" \
     XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
     DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDR" \
     systemctl --user enable --now podman.socket >/dev/null 2>&1 || warn "Could not enable podman.socket"
@@ -186,12 +206,18 @@ fi
 
 if [[ "$DO_REGISTRY_LOGIN" == "true" ]]; then
   if [[ -n "$REGISTRY_USER" && -n "$REGISTRY_PASS" ]]; then
+    CURRENT_LOGIN="$(run_as_user "$TARGET_USER" env HOME="$TARGET_HOME" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDR" podman login --get-login registry.redhat.io 2>/dev/null || true)"
+    if [[ "$CURRENT_LOGIN" == "$REGISTRY_USER" ]]; then
+      log "Existing registry.redhat.io login already valid for ${TARGET_USER} (${REGISTRY_USER})"
+    else
     log "Logging into registry.redhat.io as ${TARGET_USER}"
     run_as_user "$TARGET_USER" env \
+      HOME="$TARGET_HOME" \
       XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
       DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDR" \
       bash -c "printf '%s\n' \"$REGISTRY_PASS\" | podman login registry.redhat.io --username \"$REGISTRY_USER\" --password-stdin" \
       >/dev/null 2>&1 || warn "registry.redhat.io login failed"
+    fi
   else
     warn "--registry-login was requested but --registry-user/--registry-pass were not both provided"
   fi
@@ -199,6 +225,7 @@ fi
 
 log "Validation: podman info as ${TARGET_USER}"
 run_as_user "$TARGET_USER" env \
+  HOME="$TARGET_HOME" \
   XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
   DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDR" \
   podman info >/dev/null 2>&1 || warn "podman info failed; inspect user session and podman config"

@@ -74,6 +74,13 @@
           register: _ca_temp
           delegate_to: localhost
 
+        - name: Ensure local temporary directory is writable
+          ansible.builtin.file:
+            path: "{{ _ca_temp.path }}"
+            state: directory
+            mode: "0777"
+          delegate_to: localhost
+
         - name: Fetch files locally
           ansible.builtin.fetch:
             src: "{{ _ca_tls_dir }}/ca.{{ item }}"

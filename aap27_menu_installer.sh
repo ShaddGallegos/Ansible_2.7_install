@@ -122,6 +122,30 @@ save_env_kv() {
   fi
 }
 
+ensure_public_key_authorized() {
+  local user_name="$1"
+  local pubkey_file="$2"
+  local user_home authorized_keys
+
+  user_home="$(getent passwd "${user_name}" | cut -d: -f6 || true)"
+  user_home="${user_home:-/home/${user_name}}"
+  authorized_keys="${user_home}/.ssh/authorized_keys"
+
+  [[ -f "${pubkey_file}" ]] || return 1
+
+  run_privileged mkdir -p "${user_home}/.ssh"
+  run_privileged touch "${authorized_keys}"
+  run_privileged chmod 700 "${user_home}/.ssh"
+  run_privileged chmod 600 "${authorized_keys}"
+
+  if run_privileged grep -qxF "$(cat "${pubkey_file}")" "${authorized_keys}"; then
+    return 0
+  fi
+
+  cat "${pubkey_file}" | run_privileged tee -a "${authorized_keys}" >/dev/null
+  run_privileged chown -R "${user_name}:${user_name}" "${user_home}/.ssh"
+}
+
 ensure_admin_user_exists() {
   if id admin >/dev/null 2>&1; then
     return 0
@@ -702,6 +726,8 @@ EOF
 setup_admin_user() {
   local host_fqdn admin_password
 
+  load_env
+
   ensure_admin_user_exists
   log "admin user is present."
 
@@ -725,13 +751,20 @@ setup_admin_user() {
     chmod 644 "${ADMIN_HOME}/.ssh/id_ed25519.pub"
   fi
 
-  read_secret_prompt admin_password "Enter password for admin user"
-  printf 'admin:%s\n' "${admin_password}" | run_privileged chpasswd
-  save_env_kv "ADMIN_PASSWORD" "${admin_password}"
+  if [[ -n "${ADMIN_PASSWORD:-}" ]]; then
+    admin_password="${ADMIN_PASSWORD}"
+    log "Reusing saved admin password from ${ENV_FILE}."
+  else
+    read_secret_prompt admin_password "Enter password for admin user"
+    printf 'admin:%s\n' "${admin_password}" | run_privileged chpasswd
+    save_env_kv "ADMIN_PASSWORD" "${admin_password}"
+  fi
 
   host_fqdn="$(hostname -f 2>/dev/null || hostname)"
 
-  if command -v sshpass >/dev/null 2>&1; then
+  if ensure_public_key_authorized admin "${ADMIN_HOME}/.ssh/id_ed25519.pub"; then
+    ok "admin SSH public key already authorized locally."
+  elif command -v sshpass >/dev/null 2>&1; then
     log "Copying admin SSH key to admin@${host_fqdn}."
     sshpass -p "${admin_password}" ssh-copy-id \
       -o StrictHostKeyChecking=no \
@@ -748,6 +781,8 @@ setup_admin_user() {
 
 capture_credentials() {
   local rhsm_user rhsm_pass offline_token hub_token bundle_url
+
+  load_env
 
   cat <<'EOF'
 Credential key synopsis:
@@ -770,12 +805,41 @@ Reference links for account and token retrieval:
   https://console.redhat.com/ansible/automation-hub/token
 EOF
 
-  read -r -p "Enter RHSM_USERNAME (Red Hat Login/CDN/registry/console username) [${DEFAULT_RHSM_USERNAME}]: " rhsm_user
-  rhsm_user="${rhsm_user:-${DEFAULT_RHSM_USERNAME}}"
-  read_secret_prompt rhsm_pass "Enter RHSM_PASSWORD (Red Hat Login/CDN/registry/console password)"
-  read_secret_prompt offline_token "Enter RH_OFFLINE_TOKEN (from access.redhat.com)"
-  read_secret_prompt hub_token "Enter RH_AH_TOKEN (Remote Automation Hub token)"
-  read -r -p "Bundle URL [ENTER for default]: " bundle_url
+  if [[ -n "${RHSM_USERNAME:-}" ]]; then
+    rhsm_user="${RHSM_USERNAME}"
+    log "Reusing saved RHSM username from ${ENV_FILE}."
+  else
+    read -r -p "Enter RHSM_USERNAME (Red Hat Login/CDN/registry/console username) [${DEFAULT_RHSM_USERNAME}]: " rhsm_user
+    rhsm_user="${rhsm_user:-${DEFAULT_RHSM_USERNAME}}"
+  fi
+
+  if [[ -n "${RHSM_PASSWORD:-}" ]]; then
+    rhsm_pass="${RHSM_PASSWORD}"
+    log "Reusing saved RHSM password from ${ENV_FILE}."
+  else
+    read_secret_prompt rhsm_pass "Enter RHSM_PASSWORD (Red Hat Login/CDN/registry/console password)"
+  fi
+
+  if [[ -n "${RH_OFFLINE_TOKEN:-}" ]]; then
+    offline_token="${RH_OFFLINE_TOKEN}"
+    log "Reusing saved offline token from ${ENV_FILE}."
+  else
+    read_secret_prompt offline_token "Enter RH_OFFLINE_TOKEN (from access.redhat.com)"
+  fi
+
+  if [[ -n "${RH_AH_TOKEN:-}" ]]; then
+    hub_token="${RH_AH_TOKEN}"
+    log "Reusing saved Remote Automation Hub token from ${ENV_FILE}."
+  else
+    read_secret_prompt hub_token "Enter RH_AH_TOKEN (Remote Automation Hub token)"
+  fi
+
+  if [[ -n "${BUNDLE_URL:-}" ]]; then
+    bundle_url="${BUNDLE_URL}"
+    log "Reusing saved bundle URL from ${ENV_FILE}."
+  else
+    read -r -p "Bundle URL [ENTER for default]: " bundle_url
+  fi
 
   save_env_kv "RHSM_USERNAME" "${rhsm_user}"
   save_env_kv "RHSM_PASSWORD" "${rhsm_pass}"
@@ -792,7 +856,7 @@ EOF
   setup_admin_rootless_podman
   login_registry_as_admin "${rhsm_user}" "${rhsm_pass}"
 
-  ok "Credentials and tokens saved to ${ENV_FILE} (mode 600)."
+  ok "Credentials and tokens ensured in ${ENV_FILE} (mode 600)."
 }
 
 download_bundle() {
