@@ -146,6 +146,28 @@ ensure_public_key_authorized() {
   run_privileged chown -R "${user_name}:${user_name}" "${user_home}/.ssh"
 }
 
+ensure_controller_key_authorized_for_user() {
+  local target_user="$1"
+  local controller_key controller_pubkey controller_user
+
+  controller_user="$(get_controller_user)"
+  controller_key="$(get_controller_ssh_key)"
+  controller_pubkey="${controller_key}.pub"
+
+  if [[ ! -f "${controller_pubkey}" ]]; then
+    warn "Controller public key not found for ${controller_user}: ${controller_pubkey}"
+    return 1
+  fi
+
+  if ensure_public_key_authorized "${target_user}" "${controller_pubkey}"; then
+    ok "Controller SSH public key authorized for ${target_user}."
+    return 0
+  fi
+
+  warn "Unable to authorize controller SSH public key for ${target_user}."
+  return 1
+}
+
 ensure_admin_user_exists() {
   if id admin >/dev/null 2>&1; then
     return 0
@@ -773,6 +795,8 @@ setup_admin_user() {
   else
     warn "sshpass is not installed; skipping ssh-copy-id."
   fi
+
+  ensure_controller_key_authorized_for_user admin || true
 
   run_privileged chown -R admin:admin "${ADMIN_HOME}/.ssh"
   setup_admin_rootless_podman
