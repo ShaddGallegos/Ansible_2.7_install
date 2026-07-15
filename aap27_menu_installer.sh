@@ -16,6 +16,7 @@ ADMIN_HOME="/home/admin"
 DOWNLOAD_DIR="${ADMIN_HOME}/Downloads"
 ENV_FILE="${ADMIN_HOME}/.aap27_install.env"
 INVENTORY_FILE="${DOWNLOAD_DIR}/${BUNDLE_DIR_NAME}/inventory-growth"
+DEFAULT_RHSM_USERNAME="shadd@redhat.com"
 
 # Colors
 RED='\033[0;31m'
@@ -244,12 +245,12 @@ login_registry_as_admin() {
 
   target_user="${3:-admin}"
 
-  login_user="${1:-${RHSM_USERNAME:-${CDN_USERNAME:-${REDHAT_USERNAME:-${CONSOLE_USERNAME:-}}}}}"
+  login_user="${1:-${RHSM_USERNAME:-${CDN_USERNAME:-${REDHAT_USERNAME:-${CONSOLE_USERNAME:-${DEFAULT_RHSM_USERNAME}}}}}}"
   login_pass="${2:-${RHSM_PASSWORD:-${CDN_PASSWORD:-${REDHAT_PASSWORD:-${CONSOLE_PASSWORD:-}}}}}"
 
   if [[ -z "${login_user}" || -z "${login_pass}" ]]; then
     load_env
-    login_user="${login_user:-${RHSM_USERNAME:-${CDN_USERNAME:-${REDHAT_USERNAME:-${CONSOLE_USERNAME:-}}}}}"
+    login_user="${login_user:-${RHSM_USERNAME:-${CDN_USERNAME:-${REDHAT_USERNAME:-${CONSOLE_USERNAME:-${DEFAULT_RHSM_USERNAME}}}}}}"
     login_pass="${login_pass:-${RHSM_PASSWORD:-${CDN_PASSWORD:-${REDHAT_PASSWORD:-${CONSOLE_PASSWORD:-}}}}}"
   fi
 
@@ -277,7 +278,7 @@ login_registry_as_admin() {
   if run_as_user "${target_user}" env XDG_RUNTIME_DIR="${xdg_runtime}" DBUS_SESSION_BUS_ADDRESS="${dbus_addr}" bash -lc "printf '%s\\n' \"${login_pass}\" | podman login registry.redhat.io --username \"${login_user}\" --password-stdin" >/dev/null 2>&1; then
     ok "registry.redhat.io login succeeded for ${target_user} (rootless podman)."
   else
-    warn "registry.redhat.io login failed for ${target_user}. Verify RHSM credentials."
+    warn "registry.redhat.io login failed for ${target_user} using ${login_user}. Verify RHSM credentials."
   fi
 }
 
@@ -742,7 +743,8 @@ Reference links for account and token retrieval:
   https://console.redhat.com/ansible/automation-hub/token
 EOF
 
-  read -r -p "Enter RHSM_USERNAME (Red Hat Login/CDN/registry/console username): " rhsm_user
+  read -r -p "Enter RHSM_USERNAME (Red Hat Login/CDN/registry/console username) [${DEFAULT_RHSM_USERNAME}]: " rhsm_user
+  rhsm_user="${rhsm_user:-${DEFAULT_RHSM_USERNAME}}"
   read_secret_prompt rhsm_pass "Enter RHSM_PASSWORD (Red Hat Login/CDN/registry/console password)"
   read_secret_prompt offline_token "Enter RH_OFFLINE_TOKEN (from access.redhat.com)"
   read_secret_prompt hub_token "Enter RH_AH_TOKEN (Remote Automation Hub token)"
