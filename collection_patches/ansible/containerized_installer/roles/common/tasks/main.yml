@@ -172,7 +172,7 @@
         dest: "{{ ansible_user_dir }}/.config/containers/containers.conf"
         mode: "0644"
       vars:
-        podman_runtime: "{{ common_podman_runtime_effective | default(podman_runtime) }}"
+        podman_runtime: "{{ common_podman_runtime_effective }}"
 
 - name: Configure podman execution plane
   ansible.builtin.include_tasks: executionplane.yml
