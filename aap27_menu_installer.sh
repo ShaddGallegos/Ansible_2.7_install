@@ -284,33 +284,33 @@ login_registry_as_admin() {
 
 patch_containerized_installer_user_bus_task() {
   local install_dir="$1"
-  local task_file vendored_task_file
+  local patch_root target_root relative_file source_file target_file
 
-  task_file="${install_dir}/collections/ansible_collections/ansible/containerized_installer/roles/common/tasks/executionplane.yml"
-  vendored_task_file="${PWD}/collection_patches/ansible/containerized_installer/roles/common/tasks/executionplane.yml"
+  patch_root="${PWD}/collection_patches/ansible/containerized_installer"
+  target_root="${install_dir}/collections/ansible_collections/ansible/containerized_installer"
 
-  if [[ ! -f "${task_file}" ]]; then
-    warn "Containerized installer task file not found for user-bus patch: ${task_file}"
+  if [[ ! -d "${patch_root}" ]]; then
+    warn "Collection patch root not found: ${patch_root}"
     return 0
   fi
 
-  if [[ ! -f "${vendored_task_file}" ]]; then
-    warn "Vendored executionplane task file not found: ${vendored_task_file}"
-    return 0
-  fi
+  while IFS= read -r relative_file; do
+    source_file="${patch_root}/${relative_file}"
+    target_file="${target_root}/${relative_file}"
 
-  if cmp -s "${vendored_task_file}" "${task_file}"; then
-    log "INFO" "Vendored containerized installer executionplane task already in place."
-    return 0
-  fi
+    if [[ ! -f "${target_file}" ]]; then
+      warn "Target collection file not found for patch: ${target_file}"
+      continue
+    fi
 
-  cp "${vendored_task_file}" "${task_file}"
+    if cmp -s "${source_file}" "${target_file}"; then
+      log "INFO" "Collection patch already in place: ${relative_file}"
+      continue
+    fi
 
-  if grep -q 'DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ ansible_user_uid }}/bus"' "${task_file}"; then
-    ok "Applied vendored executionplane task with user DBus environment patch."
-  else
-    warn "Did not confirm vendored user-bus patch in ${task_file}."
-  fi
+    cp "${source_file}" "${target_file}"
+    ok "Applied collection patch: ${relative_file}"
+  done < <(cd "${patch_root}" && find . -type f | sed 's#^./##' | sort)
 }
 
 show_checklist() {
