@@ -1,22 +1,24 @@
 ---
-- name: Initialize the automation gateway database
+- name: Ensure automation gateway container is running before initialization
   containers.podman.podman_container:
-    name: automation-gateway-init
-    image: "{{ _gateway_image }}"
-    command: "aap-gateway-manage migrate --noinput"
-    systemd: false
-    cgroups: disabled
-    detach: false
-    rm: true
-    log_driver: "{{ container_log_driver }}"
-    user: "{{ ansible_user_uid }}"
-    userns: keep-id
-    network: host
-    mount:
-      - "type=tmpfs,destination=/var/cache/ansible-automation-platform/gateway,U=true"
-    secrets: "{{ _django_secrets }}"
-    volume: "{{ _web_volumes }}"
-    env: "{{ _common_env }}"
+    name: automation-gateway
+    state: started
+  run_once: true
+
+- name: Wait for automation gateway manage CLI availability
+  ansible.builtin.command:
+    cmd: podman exec automation-gateway aap-gateway-manage --help
+  register: automationgateway_manage_cli
+  changed_when: false
+  failed_when: false
+  run_once: true
+  retries: 30
+  delay: 5
+  until: automationgateway_manage_cli.rc == 0
+
+- name: Initialize the automation gateway database
+  ansible.builtin.command:
+    cmd: podman exec automation-gateway aap-gateway-manage migrate --noinput
   register: automationgateway_migrate
   changed_when: "'No migrations to apply' not in automationgateway_migrate.stdout"
   run_once: true
@@ -25,25 +27,11 @@
   until: automationgateway_migrate is not failed
 
 - name: Create django super user
-  containers.podman.podman_container:
-    name: automation-gateway-init
-    image: "{{ _gateway_image }}"
-    command: >-
-      aap-gateway-manage createsuperuser --username={{ gateway_admin_user }}
-      --email={{ gateway_admin_email }} --noinput
-    systemd: false
-    cgroups: disabled
-    detach: false
-    rm: true
-    log_driver: "{{ container_log_driver }}"
-    user: "{{ ansible_user_uid }}"
-    userns: keep-id
-    network: host
-    mount:
-      - "type=tmpfs,destination=/var/cache/ansible-automation-platform/gateway,U=true"
-    secrets: "{{ _django_secrets }}"
-    volume: "{{ _web_volumes }}"
-    env: "{{ _common_env }}"
+  ansible.builtin.command:
+    cmd: >-
+      podman exec automation-gateway aap-gateway-manage createsuperuser
+      --username={{ gateway_admin_user }} --email={{ gateway_admin_email }}
+      --noinput
   register: automationgateway_createsuperuser
   changed_when: "'Superuser created successfully' in automationgateway_createsuperuser.stdout"
   failed_when:
@@ -55,25 +43,10 @@
   until: automationgateway_createsuperuser is not failed
 
 - name: Update django super user password
-  containers.podman.podman_container:
-    name: automation-gateway-init
-    image: "{{ _gateway_image }}"
-    command: >-
-      aap-gateway-manage update_password --username={{ gateway_admin_user }}
-      --password={{ gateway_admin_password }}
-    systemd: false
-    cgroups: disabled
-    detach: false
-    rm: true
-    log_driver: "{{ container_log_driver }}"
-    user: "{{ ansible_user_uid }}"
-    userns: keep-id
-    network: host
-    mount:
-      - "type=tmpfs,destination=/var/cache/ansible-automation-platform/gateway,U=true"
-    secrets: "{{ _django_secrets }}"
-    volume: "{{ _web_volumes }}"
-    env: "{{ _common_env }}"
+  ansible.builtin.command:
+    cmd: >-
+      podman exec automation-gateway aap-gateway-manage update_password
+      --username={{ gateway_admin_user }} --password={{ gateway_admin_password }}
   register: automationgateway_updatesuperuser
   changed_when: "'Password updated' in automationgateway_updatesuperuser.stdout"
   failed_when:
@@ -86,23 +59,8 @@
   until: automationgateway_updatesuperuser is not failed
 
 - name: Initialize authenticators
-  containers.podman.podman_container:
-    name: automation-gateway-init
-    image: "{{ _gateway_image }}"
-    command: "aap-gateway-manage authenticators --initialize"
-    systemd: false
-    cgroups: disabled
-    detach: false
-    rm: true
-    log_driver: "{{ container_log_driver }}"
-    user: "{{ ansible_user_uid }}"
-    userns: keep-id
-    network: host
-    mount:
-      - "type=tmpfs,destination=/var/cache/ansible-automation-platform/gateway,U=true"
-    secrets: "{{ _django_secrets }}"
-    volume: "{{ _web_volumes }}"
-    env: "{{ _common_env }}"
+  ansible.builtin.command:
+    cmd: podman exec automation-gateway aap-gateway-manage authenticators --initialize
   register: automationgateway_authenticators
   changed_when: "'Created default local authenticator' in automationgateway_authenticators.stdout"
   run_once: true
