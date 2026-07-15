@@ -24,7 +24,7 @@
     - name: Fail when gateway container still does not start
       ansible.builtin.fail:
         msg: "{{ automationgateway_start_retry.msg | default('Container automation-gateway failed to start after recreate') }}"
-      when: automationgateway_start_retry.msg is search('exited with code')
+      when: (automationgateway_start_retry.msg | default('')) is search('exited with code')
 
 - name: Verify automation gateway container is running
   ansible.builtin.command:
