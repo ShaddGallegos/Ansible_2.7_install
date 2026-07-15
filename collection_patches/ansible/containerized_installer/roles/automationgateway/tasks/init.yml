@@ -3,6 +3,7 @@
   containers.podman.podman_container:
     name: automation-gateway
     state: started
+  become: false
   run_once: true
 
 - name: Wait for automation gateway manage CLI availability
@@ -11,6 +12,7 @@
   register: automationgateway_manage_cli
   changed_when: false
   failed_when: false
+  become: false
   run_once: true
   retries: 30
   delay: 5
@@ -21,6 +23,7 @@
     cmd: podman exec automation-gateway aap-gateway-manage migrate --noinput
   register: automationgateway_migrate
   changed_when: "'No migrations to apply' not in automationgateway_migrate.stdout"
+  become: false
   run_once: true
   retries: 5
   delay: 60
@@ -34,6 +37,7 @@
       --noinput
   register: automationgateway_createsuperuser
   changed_when: "'Superuser created successfully' in automationgateway_createsuperuser.stdout"
+  become: false
   failed_when:
     - "'That username is already taken' not in automationgateway_createsuperuser.stderr"
     - "'Superuser created successfully' not in automationgateway_createsuperuser.stdout"
@@ -49,6 +53,7 @@
       --username={{ gateway_admin_user }} --password={{ gateway_admin_password }}
   register: automationgateway_updatesuperuser
   changed_when: "'Password updated' in automationgateway_updatesuperuser.stdout"
+  become: false
   failed_when:
     - automationgateway_updatesuperuser is failed
     - not "'User matching query does not exist' in automationgateway_updatesuperuser.stderr"
@@ -63,6 +68,7 @@
     cmd: podman exec automation-gateway aap-gateway-manage authenticators --initialize
   register: automationgateway_authenticators
   changed_when: "'Created default local authenticator' in automationgateway_authenticators.stdout"
+  become: false
   run_once: true
   retries: 5
   delay: 60

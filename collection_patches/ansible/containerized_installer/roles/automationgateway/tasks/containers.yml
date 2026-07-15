@@ -18,6 +18,7 @@
     label: "{{ _autoupdate_label }}"
     state: created
     recreate: true
+  become: false
   notify: Restart automation gateway proxy
 
 - name: Create the automation gateway container
@@ -44,4 +45,5 @@
     label: "{{ _autoupdate_label }}"
     state: created
     recreate: true
+  become: false
   notify: Restart automation gateway
