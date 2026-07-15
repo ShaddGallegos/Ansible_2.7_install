@@ -1,0 +1,16 @@
+---
+- name: Run AAP 2.7 prework step
+  ansible.builtin.include_tasks: step_prework.yml
+  when: "'prework' in aap27_menu_installer_selected_steps"
+
+- name: Run AAP 2.7 host identity step
+  ansible.builtin.include_tasks: step_host_identity.yml
+  when: "'host_identity' in aap27_menu_installer_selected_steps"
+
+- name: Run AAP 2.7 download/extract bundle step
+  ansible.builtin.include_tasks: step_download_bundle.yml
+  when: "'download_bundle' in aap27_menu_installer_selected_steps"
+
+- name: Run AAP 2.7 install execution step
+  ansible.builtin.include_tasks: step_install.yml
+  when: "'install' in aap27_menu_installer_selected_steps"

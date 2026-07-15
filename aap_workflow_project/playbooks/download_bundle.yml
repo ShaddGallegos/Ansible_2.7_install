@@ -16,13 +16,13 @@
         state: directory
         owner: admin
         group: admin
-        mode: '0755'
+        mode: "0755"
 
     - name: Download bundle file
       ansible.builtin.get_url:
         url: "{{ bundle_url }}"
         dest: "{{ admin_download_dir }}/{{ bundle_file }}"
-        mode: '0644'
+        mode: "0644"
         owner: admin
         group: admin
 

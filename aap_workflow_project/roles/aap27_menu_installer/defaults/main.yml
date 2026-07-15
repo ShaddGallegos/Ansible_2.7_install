@@ -1,0 +1,41 @@
+---
+aap27_menu_installer_selected_steps:
+  - prework
+  - host_identity
+  - download_bundle
+  - install
+
+aap27_menu_installer_disable_firewall_for_install: true
+aap27_menu_installer_set_selinux_permissive_for_install: true
+aap27_menu_installer_apply_collection_patches: true
+
+aap27_menu_installer_admin_home: /home/admin
+aap27_menu_installer_download_dir: "{{ aap27_menu_installer_admin_home }}/Downloads"
+aap27_menu_installer_bundle_file: ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64.tar.gz
+aap27_menu_installer_bundle_url:
+  https://access.cdn.redhat.com/content/origin/files/sha256/5c/5c0e1834c1ae609ce840865b5aa279b5c5bde9118856b326f77cc5c8bf92d9af/ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64.tar.gz
+aap27_menu_installer_bundle_dir_name: ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64
+aap27_menu_installer_bundle_dir: "{{ aap27_menu_installer_download_dir }}/{{ aap27_menu_installer_bundle_dir_name }}"
+aap27_menu_installer_inventory_file: "{{ aap27_menu_installer_bundle_dir }}/inventory-growth"
+
+# Repo root where collection_patches lives on control node.
+aap27_menu_installer_repo_root: "{{ playbook_dir }}/.."
+aap27_menu_installer_collection_patch_root: "{{ aap27_menu_installer_repo_root }}/collection_patches/ansible/containerized_installer"
+
+aap27_menu_installer_target_fqdn: "{{ target_fqdn | default(ansible_fqdn) }}"
+aap27_menu_installer_remote_user: "{{ remote_user | default(machine_credential_username | default('admin')) }}"
+aap27_menu_installer_admin_password: "{{ admin_password | default('') }}"
+aap27_menu_installer_registry_username: "{{ rhsm_username | default(registry_username | default('')) }}"
+aap27_menu_installer_registry_password: "{{ rhsm_password | default(registry_password | default('')) }}"
+aap27_menu_installer_execution_playbook: "{{ execution_playbook | default('install') }}"
+aap27_menu_installer_ansible_verbosity: "{{ ansible_verbosity | default('') }}"
+aap27_menu_installer_controller_ssh_key: "/home/{{ aap27_menu_installer_remote_user }}/.ssh/id_ed25519"
+
+aap27_menu_installer_allowed_execution_playbooks:
+  - install
+  - backup
+  - bundle
+  - install_standalone_mcp
+  - log_gathering
+  - restore
+  - uninstall

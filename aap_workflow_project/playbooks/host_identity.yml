@@ -20,7 +20,7 @@
     - name: Ensure /etc/hosts entry with aap alias
       ansible.builtin.lineinfile:
         path: /etc/hosts
-        regexp: '.*\s{{ target_fqdn | regex_escape }}(\s|$)'
+        regexp: ".*\\s{{ target_fqdn | regex_escape }}(\\s|$)"
         line: "{{ primary_ip }} {{ target_fqdn }} aap"
         state: present
 
@@ -43,7 +43,7 @@
         content: "admin ALL=(ALL) NOPASSWD: ALL\n"
         owner: root
         group: root
-        mode: '0440'
+        mode: "0440"
 
     - name: Ensure admin .ssh dir exists
       ansible.builtin.file:
@@ -51,11 +51,12 @@
         state: directory
         owner: admin
         group: admin
-        mode: '0700'
+        mode: "0700"
 
     - name: Generate admin ssh key if missing
+      become: true
       become_user: admin
-      ansible.builtin.openssh_keypair:
+      community.crypto.openssh_keypair:
         path: /home/admin/.ssh/id_ed25519
         type: ed25519
         state: present

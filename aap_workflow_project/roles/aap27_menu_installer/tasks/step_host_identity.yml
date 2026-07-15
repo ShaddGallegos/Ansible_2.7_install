@@ -1,0 +1,52 @@
+---
+- name: Set hostname to target FQDN
+  ansible.builtin.hostname:
+    name: "{{ aap27_menu_installer_target_fqdn }}"
+
+- name: Compute primary IP
+  ansible.builtin.set_fact:
+    aap27_menu_installer_primary_ip: "{{ ansible_default_ipv4.address | default((ansible_all_ipv4_addresses | first), true) }}"
+
+- name: Ensure hosts entry with aap alias
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: ".*\\s{{ aap27_menu_installer_target_fqdn | regex_escape }}(\\s|$)"
+    line: "{{ aap27_menu_installer_primary_ip }} {{ aap27_menu_installer_target_fqdn }} aap"
+    state: present
+
+- name: Ensure admin user exists
+  ansible.builtin.user:
+    name: admin
+    shell: /bin/bash
+    create_home: true
+    state: present
+
+- name: Set admin password when provided
+  ansible.builtin.user:
+    name: admin
+    password: "{{ aap27_menu_installer_admin_password | password_hash('sha512') }}"
+  when: aap27_menu_installer_admin_password | length > 0
+
+- name: Configure passwordless sudo for admin
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/admin
+    content: "admin ALL=(ALL) NOPASSWD: ALL\n"
+    owner: root
+    group: root
+    mode: "0440"
+
+- name: Ensure admin ssh dir exists
+  ansible.builtin.file:
+    path: "{{ aap27_menu_installer_admin_home }}/.ssh"
+    state: directory
+    owner: admin
+    group: admin
+    mode: "0700"
+
+- name: Generate admin ssh key if missing
+  become: true
+  become_user: admin
+  community.crypto.openssh_keypair:
+    path: "{{ aap27_menu_installer_admin_home }}/.ssh/id_ed25519"
+    type: ed25519
+    state: present
