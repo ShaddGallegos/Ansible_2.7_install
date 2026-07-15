@@ -55,6 +55,17 @@
         - ansible_facts.services.get('firewalld.service', {}) | length
         - ansible_facts.services['firewalld.service']['status'] == 'enabled'
 
+- name: Set package remediation repo list for supported RHEL hosts
+  ansible.builtin.set_fact:
+    common_package_remediation_repos:
+      - "rhel-{{ ansible_distribution_major_version }}-for-{{ ansible_architecture }}-baseos-rpms"
+      - "rhel-{{ ansible_distribution_major_version }}-for-{{ ansible_architecture }}-appstream-rpms"
+      - "codeready-builder-for-rhel-{{ ansible_distribution_major_version }}-{{ ansible_architecture }}-rpms"
+  changed_when: false
+  when:
+    - not ostree | bool
+    - ansible_facts.os_family == 'RedHat'
+
 - name: Install container tools
   when: not ostree | bool
   become: true
@@ -79,11 +90,18 @@
     - name: Enable temporary repos for container tools retry
       ansible.builtin.command:
         cmd: "subscription-manager repos --enable {{ item }}"
-      loop:
-        - "rhel-{{ ansible_distribution_major_version }}-for-{{ ansible_architecture }}-baseos-rpms"
-        - "rhel-{{ ansible_distribution_major_version }}-for-{{ ansible_architecture }}-appstream-rpms"
-        - "codeready-builder-for-rhel-{{ ansible_distribution_major_version }}-{{ ansible_architecture }}-rpms"
+      loop: "{{ common_package_remediation_repos }}"
       register: common_enable_container_tools_repos
+      changed_when: false
+      failed_when: false
+      when: ansible_facts.os_family == 'RedHat'
+
+    - name: Refresh dnf metadata before container tools retry
+      ansible.builtin.command:
+        cmd: "{{ item }}"
+      loop:
+        - dnf clean all
+        - dnf makecache
       changed_when: false
       failed_when: false
       when: ansible_facts.os_family == 'RedHat'
@@ -96,10 +114,7 @@
     - name: Disable temporary repos used for container tools retry
       ansible.builtin.command:
         cmd: "subscription-manager repos --disable {{ item }}"
-      loop:
-        - "rhel-{{ ansible_distribution_major_version }}-for-{{ ansible_architecture }}-baseos-rpms"
-        - "rhel-{{ ansible_distribution_major_version }}-for-{{ ansible_architecture }}-appstream-rpms"
-        - "codeready-builder-for-rhel-{{ ansible_distribution_major_version }}-{{ ansible_architecture }}-rpms"
+      loop: "{{ common_package_remediation_repos }}"
       changed_when: false
       failed_when: false
       when:
@@ -160,10 +175,17 @@
     - name: Enable temporary repos for polkit retry
       ansible.builtin.command:
         cmd: "subscription-manager repos --enable {{ item }}"
+      loop: "{{ common_package_remediation_repos }}"
+      changed_when: false
+      failed_when: false
+      when: ansible_facts.os_family == 'RedHat'
+
+    - name: Refresh dnf metadata before polkit retry
+      ansible.builtin.command:
+        cmd: "{{ item }}"
       loop:
-        - "rhel-{{ ansible_distribution_major_version }}-for-{{ ansible_architecture }}-baseos-rpms"
-        - "rhel-{{ ansible_distribution_major_version }}-for-{{ ansible_architecture }}-appstream-rpms"
-        - "codeready-builder-for-rhel-{{ ansible_distribution_major_version }}-{{ ansible_architecture }}-rpms"
+        - dnf clean all
+        - dnf makecache
       changed_when: false
       failed_when: false
       when: ansible_facts.os_family == 'RedHat'
@@ -175,10 +197,7 @@
     - name: Disable temporary repos used for polkit retry
       ansible.builtin.command:
         cmd: "subscription-manager repos --disable {{ item }}"
-      loop:
-        - "rhel-{{ ansible_distribution_major_version }}-for-{{ ansible_architecture }}-baseos-rpms"
-        - "rhel-{{ ansible_distribution_major_version }}-for-{{ ansible_architecture }}-appstream-rpms"
-        - "codeready-builder-for-rhel-{{ ansible_distribution_major_version }}-{{ ansible_architecture }}-rpms"
+      loop: "{{ common_package_remediation_repos }}"
       changed_when: false
       failed_when: false
       when:
@@ -246,10 +265,17 @@
         - name: Enable temporary repos for compress/rsync retry
           ansible.builtin.command:
             cmd: "subscription-manager repos --enable {{ item }}"
+          loop: "{{ common_package_remediation_repos }}"
+          changed_when: false
+          failed_when: false
+          when: ansible_facts.os_family == 'RedHat'
+
+        - name: Refresh dnf metadata before compress/rsync retry
+          ansible.builtin.command:
+            cmd: "{{ item }}"
           loop:
-            - "rhel-{{ ansible_distribution_major_version }}-for-{{ ansible_architecture }}-baseos-rpms"
-            - "rhel-{{ ansible_distribution_major_version }}-for-{{ ansible_architecture }}-appstream-rpms"
-            - "codeready-builder-for-rhel-{{ ansible_distribution_major_version }}-{{ ansible_architecture }}-rpms"
+            - dnf clean all
+            - dnf makecache
           changed_when: false
           failed_when: false
           when: ansible_facts.os_family == 'RedHat'
@@ -263,10 +289,7 @@
         - name: Disable temporary repos used for compress/rsync retry
           ansible.builtin.command:
             cmd: "subscription-manager repos --disable {{ item }}"
-          loop:
-            - "rhel-{{ ansible_distribution_major_version }}-for-{{ ansible_architecture }}-baseos-rpms"
-            - "rhel-{{ ansible_distribution_major_version }}-for-{{ ansible_architecture }}-appstream-rpms"
-            - "codeready-builder-for-rhel-{{ ansible_distribution_major_version }}-{{ ansible_architecture }}-rpms"
+          loop: "{{ common_package_remediation_repos }}"
           changed_when: false
           failed_when: false
           when:
