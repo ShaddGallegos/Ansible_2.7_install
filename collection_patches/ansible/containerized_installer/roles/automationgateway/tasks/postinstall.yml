@@ -98,8 +98,11 @@
 
     - name: Set current service nodes facts
       ansible.builtin.set_fact:
-        automationgateway_current_service_nodes: "{{ automationgateway_list_services.stdout_lines | select('match', '^\\s*node:') | map('regex_replace', '^\\s*node:\\\
-          s*(.*)', '\\1') | list }}"
+        automationgateway_current_service_nodes: >-
+          {{ automationgateway_list_services.stdout_lines
+             | select('match', '^\s*node:')
+             | map('regex_replace', '^\s*node:\s*(.*)', '\1')
+             | list }}
 
     - name: Update automation platform gateway service nodes
       ansible.platform.service_node:
