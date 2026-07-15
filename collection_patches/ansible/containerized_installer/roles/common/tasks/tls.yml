@@ -174,13 +174,30 @@
     - pem
     - openssl
 
-- name: Update CA trust
+- name: Resolve init container image for CA trust
+  ansible.builtin.set_fact:
+    common_init_container_image: >-
+      {{
+        vars.get('_init_container_image')
+        or vars.get('init_container_image')
+        or ''
+      }}
+
+- name: Update CA trust in container
+  when: common_init_container_image | length > 0
   containers.podman.podman_container:
     name: update-ca-trust
-    image: "{{ _init_container_image }}"
+    image: "{{ common_init_container_image }}"
     command: update-ca-trust extract
     user: root
     rm: true
     security_opt:
       - label=disable
     volumes: "{{ common_ca_volumes }}"
+
+- name: Update CA trust on host when container image is unavailable
+  when: common_init_container_image | length == 0
+  ansible.builtin.command:
+    cmd: update-ca-trust extract
+  become: true
+  changed_when: false
