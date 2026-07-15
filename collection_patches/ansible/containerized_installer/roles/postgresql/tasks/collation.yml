@@ -6,55 +6,92 @@
   when: not ostree | bool
 
 - name: Ensure postgresql container is started before collation checks
-  ansible.builtin.include_tasks: systemd.yml
-  vars:
-    __systemd_enabled: true
-    __systemd_state: started
-
-- name: Wait for postgresql TCP port to accept connections
-  ansible.builtin.wait_for:
-    host: '127.0.0.1'
-    port: '{{ postgresql_port }}'
+  ansible.builtin.systemd:
+    name: postgresql.service
     state: started
-    connect_timeout: 2
-    timeout: 5
-  register: postgresql_wait_for_port
-  retries: 18
-  delay: 10
-  until: postgresql_wait_for_port is succeeded
+    enabled: true
+    scope: user
+    daemon_reload: true
+
+- name: Ensure postgresql container is started before collation checks
+  containers.podman.podman_container:
+    name: postgresql
+    state: started
 
 - name: Wait for postgresql to be ready
-  community.postgresql.postgresql_ping:
-    login_host: '127.0.0.1'
-    login_port: '{{ postgresql_port }}'
-    login_user: '{{ postgresql_admin_username | default("postgres") }}'
-    login_password: '{{ postgresql_admin_password | default(omit) }}'
-    login_db: '{{ postgresql_admin_database | default("postgres") }}'
-  register: postgresql_ping_result
-  retries: 10
-  delay: 30
-  until:
-    - postgresql_ping_result.is_available is defined
-    - postgresql_ping_result.is_available | bool
+  block:
+    - name: Wait for postgresql readiness using in-container pg_isready
+      ansible.builtin.command:
+        cmd: >-
+          podman exec postgresql pg_isready
+          -U {{ postgresql_admin_username | default("postgres") }}
+          -d {{ postgresql_admin_database | default("postgres") }}
+      register: postgresql_pg_isready
+      changed_when: false
+      failed_when: false
+      retries: 30
+      delay: 10
+      until: postgresql_pg_isready.rc == 0
+
+    - name: Confirm postgresql ping over localhost
+      community.postgresql.postgresql_ping:
+        login_host: "127.0.0.1"
+        login_port: "{{ postgresql_port }}"
+        login_user: '{{ postgresql_admin_username | default("postgres") }}'
+        login_password: "{{ postgresql_admin_password | default(omit) }}"
+        login_db: '{{ postgresql_admin_database | default("postgres") }}'
+      register: postgresql_ping_result
+      retries: 5
+      delay: 10
+      until:
+        - postgresql_ping_result.is_available is defined
+        - postgresql_ping_result.is_available | bool
+  rescue:
+    - name: Gather postgresql container status
+      ansible.builtin.command:
+        cmd: podman ps -a --filter name=postgresql --format '{{.Names}} {{.Status}}'
+      register: postgresql_container_status
+      changed_when: false
+      failed_when: false
+
+    - name: Gather postgresql container logs
+      ansible.builtin.command:
+        cmd: podman logs --tail 200 postgresql
+      register: postgresql_container_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Fail with postgresql readiness diagnostics
+      ansible.builtin.fail:
+        msg: |
+          PostgreSQL container did not become ready for collation checks.
+          Container status:
+          {{ postgresql_container_status.stdout | default('n/a') }}
+
+          Last pg_isready output:
+          {{ postgresql_pg_isready.stdout | default(postgresql_pg_isready.stderr | default('n/a')) }}
+
+          Container logs (tail 200):
+          {{ postgresql_container_logs.stdout | default('n/a') }}
 
 - name: Get postgres database collation
   community.postgresql.postgresql_query:
-    query: 'SELECT datcollversion FROM pg_database WHERE datname=(%s)'
+    query: "SELECT datcollversion FROM pg_database WHERE datname=(%s)"
     positional_args: '{{ postgresql_admin_database | default("postgres") }}'
-    login_host: '127.0.0.1'
-    login_port: '{{ postgresql_port }}'
+    login_host: "127.0.0.1"
+    login_port: "{{ postgresql_port }}"
     login_user: '{{ postgresql_admin_username | default("postgres") }}'
-    login_password: '{{ postgresql_admin_password | default(omit) }}'
+    login_password: "{{ postgresql_admin_password | default(omit) }}"
     login_db: '{{ postgresql_admin_database | default("postgres") }}'
   register: _postgres_db_info
 
 - name: Refresh postgres database collation version
   community.postgresql.postgresql_query:
     query: 'ALTER DATABASE {{ postgresql_admin_database | default("postgres") }} REFRESH COLLATION VERSION'
-    login_host: '127.0.0.1'
-    login_port: '{{ postgresql_port }}'
+    login_host: "127.0.0.1"
+    login_port: "{{ postgresql_port }}"
     login_user: '{{ postgresql_admin_username | default("postgres") }}'
-    login_password: '{{ postgresql_admin_password | default(omit) }}'
+    login_password: "{{ postgresql_admin_password | default(omit) }}"
     login_db: '{{ postgresql_admin_database | default("postgres") }}'
   when:
     - _postgres_db_info.query_result[0].datcollversion is not none
@@ -62,24 +99,23 @@
 
 - name: Get template1 database collation
   community.postgresql.postgresql_query:
-    query: 'SELECT datcollversion FROM pg_database WHERE datname=(%s)'
-    positional_args: 'template1'
-    login_host: '127.0.0.1'
-    login_port: '{{ postgresql_port }}'
+    query: "SELECT datcollversion FROM pg_database WHERE datname=(%s)"
+    positional_args: "template1"
+    login_host: "127.0.0.1"
+    login_port: "{{ postgresql_port }}"
     login_user: '{{ postgresql_admin_username | default("postgres") }}'
-    login_password: '{{ postgresql_admin_password | default(omit) }}'
+    login_password: "{{ postgresql_admin_password | default(omit) }}"
     login_db: '{{ postgresql_admin_database | default("postgres") }}'
   register: _template1_db_info
 
 - name: Refresh template1 database collation version
   community.postgresql.postgresql_query:
-    query: 'ALTER DATABASE template1 REFRESH COLLATION VERSION'
-    login_host: '127.0.0.1'
-    login_port: '{{ postgresql_port }}'
+    query: "ALTER DATABASE template1 REFRESH COLLATION VERSION"
+    login_host: "127.0.0.1"
+    login_port: "{{ postgresql_port }}"
     login_user: '{{ postgresql_admin_username | default("postgres") }}'
-    login_password: '{{ postgresql_admin_password | default(omit) }}'
+    login_password: "{{ postgresql_admin_password | default(omit) }}"
     login_db: '{{ postgresql_admin_database | default("postgres") }}'
   when:
     - _template1_db_info.query_result[0].datcollversion is not none
     - _template1_db_info.query_result[0].datcollversion is version('2.34', '<')
-...
