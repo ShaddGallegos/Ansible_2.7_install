@@ -16,18 +16,20 @@
     secrets: "{{ _django_secrets }}"
     volume: "{{ _web_volumes }}"
     env: "{{ _common_env }}"
-  register: _migrate
-  changed_when: "'No migrations to apply' not in _migrate.stdout"
+  register: automationgateway_migrate
+  changed_when: "'No migrations to apply' not in automationgateway_migrate.stdout"
   run_once: true
   retries: 5
   delay: 60
-  until: _migrate is not failed
+  until: automationgateway_migrate is not failed
 
 - name: Create django super user
   containers.podman.podman_container:
     name: automation-gateway-init
     image: "{{ _gateway_image }}"
-    command: "aap-gateway-manage createsuperuser --username={{ gateway_admin_user }} --email={{ gateway_admin_email }} --noinput"
+    command: >-
+      aap-gateway-manage createsuperuser --username={{ gateway_admin_user }}
+      --email={{ gateway_admin_email }} --noinput
     systemd: false
     detach: false
     rm: true
@@ -40,21 +42,23 @@
     secrets: "{{ _django_secrets }}"
     volume: "{{ _web_volumes }}"
     env: "{{ _common_env }}"
-  register: _createsuperuser
-  changed_when: "'Superuser created successfully' in _createsuperuser.stdout"
+  register: automationgateway_createsuperuser
+  changed_when: "'Superuser created successfully' in automationgateway_createsuperuser.stdout"
   failed_when:
-    - "'That username is already taken' not in _createsuperuser.stderr"
-    - "'Superuser created successfully' not in _createsuperuser.stdout"
+    - "'That username is already taken' not in automationgateway_createsuperuser.stderr"
+    - "'Superuser created successfully' not in automationgateway_createsuperuser.stdout"
   run_once: true
   retries: 5
   delay: 60
-  until: _createsuperuser is not failed
+  until: automationgateway_createsuperuser is not failed
 
 - name: Update django super user password
   containers.podman.podman_container:
     name: automation-gateway-init
     image: "{{ _gateway_image }}"
-    command: "aap-gateway-manage update_password --username={{ gateway_admin_user }} --password={{ gateway_admin_password }}"
+    command: >-
+      aap-gateway-manage update_password --username={{ gateway_admin_user }}
+      --password={{ gateway_admin_password }}
     systemd: false
     detach: false
     rm: true
@@ -67,16 +71,16 @@
     secrets: "{{ _django_secrets }}"
     volume: "{{ _web_volumes }}"
     env: "{{ _common_env }}"
-  register: _updatesuperuser
-  changed_when: "'Password updated' in _updatesuperuser.stdout"
+  register: automationgateway_updatesuperuser
+  changed_when: "'Password updated' in automationgateway_updatesuperuser.stdout"
   failed_when:
-    - _updatesuperuser is failed
-    - not "'User matching query does not exist' in _updatesuperuser.stderr"
+    - automationgateway_updatesuperuser is failed
+    - not "'User matching query does not exist' in automationgateway_updatesuperuser.stderr"
   no_log: true
   run_once: true
   retries: 5
   delay: 30
-  until: _updatesuperuser is not failed
+  until: automationgateway_updatesuperuser is not failed
 
 - name: Initialize authenticators
   containers.podman.podman_container:
@@ -95,9 +99,9 @@
     secrets: "{{ _django_secrets }}"
     volume: "{{ _web_volumes }}"
     env: "{{ _common_env }}"
-  register: _authenticators
-  changed_when: "'Created default local authenticator' in _authenticators.stdout"
+  register: automationgateway_authenticators
+  changed_when: "'Created default local authenticator' in automationgateway_authenticators.stdout"
   run_once: true
   retries: 5
   delay: 60
-  until: _authenticators is not failed
+  until: automationgateway_authenticators is not failed
