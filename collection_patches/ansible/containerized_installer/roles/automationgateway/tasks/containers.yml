@@ -1,4 +1,15 @@
 ---
+- name: Set gateway user namespace compatibility mode
+  ansible.builtin.set_fact:
+    automationgateway_use_keep_id: >-
+      {{
+        not (
+          (ansible_distribution_major_version | int) >= 10 and
+          (podman_runtime | default('crun')) == 'crun'
+        )
+      }}
+  changed_when: false
+
 - name: Create the automation gateway proxy container
   containers.podman.podman_container:
     name: automation-gateway-proxy
@@ -10,8 +21,8 @@
       path: "{{ ansible_user_dir }}/.config/systemd/user"
       separator: ""
     log_driver: "{{ container_log_driver }}"
-    user: "{{ ansible_user_uid }}"
-    userns: keep-id
+    user: "{{ ansible_user_uid if automationgateway_use_keep_id | bool else omit }}"
+    userns: "{{ 'keep-id' if automationgateway_use_keep_id | bool else omit }}"
     network: host
     command: "/usr/bin/envoy --config-path /etc/envoy/envoy.yaml --log-path /dev/stdout"
     volume: "{{ _envoy_volumes }}"
@@ -33,8 +44,8 @@
       path: "{{ ansible_user_dir }}/.config/systemd/user"
       separator: ""
     log_driver: "{{ container_log_driver }}"
-    user: "{{ ansible_user_uid }}"
-    userns: keep-id
+    user: "{{ ansible_user_uid if automationgateway_use_keep_id | bool else omit }}"
+    userns: "{{ 'keep-id' if automationgateway_use_keep_id | bool else omit }}"
     network: host
     mount:
       - "type=tmpfs,destination=/run/nginx,U=true"
