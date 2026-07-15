@@ -1,0 +1,58 @@
+---
+- name: Set postgresql facts
+  ansible.builtin.include_tasks: facts.yml
+
+- name: Configure podman secrets
+  ansible.builtin.include_tasks: secrets.yml
+
+- name: Create podman volumes
+  ansible.builtin.include_tasks: volumes.yml
+  vars:
+    __volume_state: present
+
+- name: Configure postgresql
+  ansible.builtin.include_tasks: config.yml
+
+- name: Configure TLS
+  ansible.builtin.include_tasks: tls.yml
+  when: not postgresql_disable_tls | bool
+
+- name: Handle container image update
+  ansible.builtin.include_tasks: update.yml
+
+- name: Configure containers
+  ansible.builtin.include_tasks: containers.yml
+
+- name: Ensure postgresql container is enabled and started
+  ansible.builtin.include_tasks: systemd.yml
+  vars:
+    __systemd_enabled: true
+    __systemd_state: started
+
+- name: Check postgresql user service active state
+  ansible.builtin.command:
+    cmd: systemctl --user is-active postgresql.service
+  register: postgresql_service_active
+  changed_when: false
+  failed_when: false
+
+- name: Check postgresql user service enabled state
+  ansible.builtin.command:
+    cmd: systemctl --user is-enabled postgresql.service
+  register: postgresql_service_enabled
+  changed_when: false
+  failed_when: false
+
+- name: Remediate postgresql user service when not active or enabled
+  ansible.builtin.include_tasks: systemd.yml
+  vars:
+    __systemd_enabled: true
+    __systemd_state: started
+  when:
+    - postgresql_service_active.rc != 0 or postgresql_service_enabled.rc != 0
+
+- name: Add firewalld rules
+  ansible.builtin.include_tasks: firewalld.yml
+  vars:
+    __firewalld_state: enabled
+...
