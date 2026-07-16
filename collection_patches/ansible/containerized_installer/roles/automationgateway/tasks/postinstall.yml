@@ -1,21 +1,60 @@
 ---
-- name: Wait for automation gateway service port to accept connections
-  ansible.builtin.wait_for:
-    host: "{{ _gateway_hostname }}"
-    port: "{{ _gateway_port }}"
-    delay: 10
-    timeout: 600
-    connect_timeout: 5
+- name: Wait for automation gateway readiness
+  block:
+    - name: Wait for automation gateway service port to accept local connections
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ _gateway_port }}"
+        delay: 10
+        timeout: 600
+        connect_timeout: 5
 
-- name: Ensure automation gateway is ready
-  ansible.builtin.uri:
-    url: "{{ _gateway_protocol }}://{{ _gateway_hostname | ansible.containerized_installer.ipv6_wrap }}:{{ _gateway_port }}/api/gateway/v1/ping/"
-    validate_certs: true
-    ca_path: "{{ _ca_tls_dir }}/extracted/pem/tls-ca-bundle.pem"
-  register: automationgateway_ready
-  until: automationgateway_ready.status == 200
-  retries: 30
-  delay: 10
+    - name: Ensure automation gateway is ready
+      ansible.builtin.uri:
+        url: "{{ _gateway_protocol }}://{{ _gateway_hostname | ansible.containerized_installer.ipv6_wrap }}:{{ _gateway_port }}/api/gateway/v1/ping/"
+        validate_certs: true
+        ca_path: "{{ _ca_tls_dir }}/extracted/pem/tls-ca-bundle.pem"
+      register: automationgateway_ready
+      until: automationgateway_ready.status == 200
+      retries: 30
+      delay: 10
+  rescue:
+    - name: Gather automation gateway container status
+      ansible.builtin.command:
+        cmd: "podman ps -a --filter name=automation-gateway --format '{{ '{{.Names}} {{.Status}}' }}'"
+      register: automationgateway_container_status
+      changed_when: false
+      failed_when: false
+
+    - name: Gather automation gateway container logs
+      ansible.builtin.command:
+        cmd: podman logs --tail 200 automation-gateway
+      register: automationgateway_container_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Gather automation gateway proxy container logs
+      ansible.builtin.command:
+        cmd: podman logs --tail 200 automation-gateway-proxy
+      register: automationgateway_proxy_container_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Fail with automation gateway readiness diagnostics
+      ansible.builtin.fail:
+        msg: |
+          Automation Gateway did not become ready on {{ _gateway_protocol }}://{{ _gateway_hostname }}:{{ _gateway_port }}.
+          Container status:
+          {{ automationgateway_container_status.stdout | default('n/a') }}
+
+          Last readiness response:
+          {{ automationgateway_ready.msg | default(automationgateway_ready.content | default('n/a')) }}
+
+          automation-gateway logs (tail 200):
+          {{ automationgateway_container_logs.stdout | default('n/a') }}
+
+          automation-gateway-proxy logs (tail 200):
+          {{ automationgateway_proxy_container_logs.stdout | default('n/a') }}
 
 - name: Register services
   environment:
