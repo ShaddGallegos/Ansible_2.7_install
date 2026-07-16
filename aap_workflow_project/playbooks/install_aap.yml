@@ -139,12 +139,8 @@
           - ansible-playbook
           - -i
           - inventory-growth
-          - -u
-          - "{{ installer_remote_user }}"
           - -c
-          - ssh
-          - -e
-          - "ansible_user={{ installer_remote_user }}"
+          - local
           - -e
           - "ansible_user_uid={{ remote_user_uid }}"
           - -e
@@ -152,7 +148,29 @@
           - -e
           - ansible_become_method=sudo
           - -e
-          - ansible_connection=ssh
+          - "registry_auth={{ registry_auth | default('false') }}"
+          - -e
+          - "postgresql_admin_password={{ postgresql_admin_password | default(admin_password | default('')) }}"
+          - -e
+          - "redis_mode={{ redis_mode | default('standalone') }}"
+          - -e
+          - "redis_cluster={{ redis_cluster | default('false') }}"
+          - -e
+          - "redis_cluster_mode={{ redis_cluster_mode | default('false') }}"
+          - -e
+          - "controller_admin_password={{ controller_admin_password | default(admin_password | default('')) }}"
+          - -e
+          - "controller_pg_host={{ controller_pg_host | default('localhost') }}"
+          - -e
+          - "controller_pg_password={{ controller_pg_password | default(controller_admin_password | default(admin_password | default(''))) }}"
+          - -e
+          - "hub_admin_password={{ hub_admin_password | default('') }}"
+          - -e
+          - "hub_pg_host={{ hub_pg_host | default(controller_pg_host | default('localhost')) }}"
+          - -e
+          - "hub_pg_password={{ hub_pg_password | default(controller_pg_password | default(admin_password | default(''))) }}"
+          - -e
+          - "hub_pg_user={{ hub_pg_user | default('postgres') }}"
           - "ansible.containerized_installer.{{ execution_playbook }}"
       args:
         chdir: "{{ bundle_dir }}"
