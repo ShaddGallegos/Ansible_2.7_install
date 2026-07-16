@@ -7,13 +7,13 @@
   vars:
     bundle_dir: "/home/admin/Downloads/ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64"
     installer_inventory_file: "{{ bundle_dir }}/inventory-growth"
-    target_fqdn: "{{ target_fqdn | default(default_fqdn) }}"
+    target_fqdn: "{{ default_fqdn | default('aap.example.com') }}"
     installer_remote_user: "{{ remote_user | default(machine_credential_username | default('admin')) }}"
     remote_user_uid: "1000"
-    admin_password: "{{ admin_password | default('') }}"
-    rhsm_username: "{{ rhsm_username | default(registry_username) }}"
-    rhsm_password: "{{ rhsm_password | default(registry_password) }}"
-    execution_playbook: "{{ execution_playbook | default('install') }}"
+    admin_password: ""
+    rhsm_username: "{{ registry_username | default('') }}"
+    rhsm_password: "{{ registry_password | default('') }}"
+    execution_playbook: "install"
     runtime_host_line: >-
       ansible_host={{ ansible_default_ipv4.address }} real_hostname={{ ansible_hostname }}
       ansible_user={{ installer_remote_user }} ansible_ssh_private_key_file=/home/{{ installer_remote_user }}/.ssh/id_ed25519

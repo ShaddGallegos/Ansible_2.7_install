@@ -37,5 +37,6 @@ aap_workflow_template_name: "AAP27 End-to-End Install Workflow"
 
 # Survey defaults
 default_fqdn: "aap.example.com"
-default_bundle_url: "https://access.cdn.redhat.com/content/origin/files/sha256/5c/5c0e1834c1ae609ce840865b5aa279b5c5bde9118856b326f77cc5c8bf92d9af/ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64.tar.gz"
+default_bundle_url: >-
+  https://access.cdn.redhat.com/content/origin/files/sha256/5c/5c0e1834c1ae609ce840865b5aa279b5c5bde9118856b326f77cc5c8bf92d9af/ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64.tar.gz
 default_bundle_file: "ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64.tar.gz"
