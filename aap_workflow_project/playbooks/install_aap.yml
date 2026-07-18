@@ -131,6 +131,34 @@
         timeout: 30
       failed_when: false
 
+    - name: Build nested forward variables from hostvars
+      ansible.builtin.set_fact:
+        nested_forward_vars: "{{ nested_forward_vars | default({}) | combine({item.key: item.value}) }}"
+      loop: "{{ hostvars[inventory_hostname] | dict2items }}"
+      when: item.key is match('(_password$|_host$|_user$|^registry_auth$|^redis_|^controller_|^hub_|^eda_|^automationmetrics_|^postgresql_)')
+
+    - name: Ensure sensible defaults for automationmetrics and related vars
+      ansible.builtin.set_fact:
+        nested_forward_vars: >-
+          {{ nested_forward_vars | default({}) | combine({
+            'automationmetrics_pg_host': (automationmetrics_pg_host | default(controller_pg_host | default('localhost'))),
+            'automationmetrics_pg_password': (automationmetrics_pg_password | default(controller_pg_password | default(admin_password | default('')))),
+            'automationmetrics_pg_user': (automationmetrics_pg_user | default('postgres')),
+            'automationmetrics_admin_password': (automationmetrics_admin_password | default(controller_admin_password | default(admin_password | default('')))),
+            'automationmetrics_controller_read_pg_host': (automationmetrics_controller_read_pg_host | default(controller_pg_host | default('localhost'))),
+            'automationmetrics_controller_read_pg_user': (automationmetrics_controller_read_pg_user | default('postgres')),
+            'automationmetrics_controller_read_pg_password': (automationmetrics_controller_read_pg_password | default(controller_pg_password | default(admin_password
+          | default(''))))
+          }) }}
+
+    - name: Write forwarded extra-vars file for nested installer
+      ansible.builtin.copy:
+        dest: "{{ bundle_dir }}/forwarded_extra_vars.yml"
+        content: "{{ nested_forward_vars | default({}) | to_nice_yaml }}\n"
+        owner: admin
+        group: admin
+        mode: "0600"
+
     - name: Run selected AAP containerized playbook
       become: true
       become_user: admin
@@ -171,6 +199,16 @@
           - "hub_pg_password={{ hub_pg_password | default(controller_pg_password | default(admin_password | default(''))) }}"
           - -e
           - "hub_pg_user={{ hub_pg_user | default('postgres') }}"
+          - -e
+          - "eda_admin_password={{ eda_admin_password | default(controller_admin_password | default(admin_password | default(''))) }}"
+          - -e
+          - "eda_pg_host={{ eda_pg_host | default(controller_pg_host | default('localhost')) }}"
+          - -e
+          - "eda_pg_password={{ eda_pg_password | default(eda_admin_password | default(controller_pg_password | default(admin_password | default('')))) }}"
+          - -e
+          - "eda_pg_user={{ eda_pg_user | default('postgres') }}"
+          - -e
+          - "@forwarded_extra_vars.yml"
           - "ansible.containerized_installer.{{ execution_playbook }}"
       args:
         chdir: "{{ bundle_dir }}"

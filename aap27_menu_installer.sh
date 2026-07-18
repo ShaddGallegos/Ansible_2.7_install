@@ -1558,6 +1558,21 @@ run_execution_playbook() {
   log "INFO" "Runtime inventory redis_mode=${runtime_redis_mode:-unset}"
   log "INFO" "Runtime ansible verbosity=${ansible_verbosity:-none}"
 
+  # Pause for operator confirmation of collected variables before running installer
+  echo
+  echo "Collected runtime settings:" 
+  echo "  Host line: ${runtime_host_line:-<not-found>}"
+  echo "  Connection: ${runtime_conn:-unset}"
+  echo "  Remote user: ${runtime_user:-unset}"
+  echo "  Become: ${runtime_become:-unset}"
+  echo "  Redis mode: ${runtime_redis_mode:-unset}"
+  echo
+  read -r -p "Proceed with these settings and run the installer? [Y/n]: " proceed_choice
+  if [[ "${proceed_choice:-Y}" =~ ^[Nn]$ ]]; then
+    warn "Installer run cancelled by operator. Returning to menu."
+    return 0
+  fi
+
   if id "${controller_user}" >/dev/null 2>&1; then
     chown -R "${controller_user}:${controller_user}" "${install_dir}" 2>/dev/null || true
   fi
@@ -1851,7 +1866,77 @@ main() {
   enforce_admin_home_ownership
   mkdir -p "${DOWNLOAD_DIR}"
   initialize_env_file
+  # Prompt whether this is a local or remote install and prepare inventory
+  initial_install_scope_prompt
   menu
+}
+
+initial_install_scope_prompt() {
+  local choice ctl_ip ctl_fqdn install_host inv_dir inv_file
+
+  inv_dir="${SCRIPT_DIR}/aap_workflow_project/inventory"
+  inv_file="${inv_dir}/controller.ini"
+
+  mkdir -p "${inv_dir}"
+
+  while true; do
+    clear
+    cat <<'EOF'
+Installation Mode
+=================
+1) Local (install on this system)
+2) Remote (install on remote controller)
+EOF
+
+    read -r -p "Select option (1/2): " choice
+    case "${choice}" in
+      1)
+        log "Selected local install. Inventory set to use localhost."
+        cat > "${inv_file}" <<EOF
+[controller]
+localhost ansible_connection=local
+
+[installhost]
+$(hostname -f 2>/dev/null || hostname) ansible_connection=local
+
+[all:vars]
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+EOF
+        save_env_kv "INSTALL_SCOPE" "local"
+        break
+        ;;
+      2)
+        read -r -p "Enter controller IP or hostname (example: 192.168.122.140): " ctl_ip
+        read -r -p "Enter controller FQDN (example: aap.example.com): " ctl_fqdn
+        if [[ -z "${ctl_ip}" && -z "${ctl_fqdn}" ]]; then
+          warn "Controller host is required for remote installs."
+          continue
+        fi
+        ctl_ip="${ctl_ip:-${ctl_fqdn}}"
+        install_host="$(hostname -f 2>/dev/null || hostname)"
+
+        log "Writing remote inventory to ${inv_file} (controller=${ctl_ip})"
+        cat > "${inv_file}" <<EOF
+[controller]
+${ctl_ip} ansible_host=${ctl_ip} ansible_user=admin ansible_ssh_private_key_file=/home/admin/.ssh/id_ed25519
+
+[installhost]
+${install_host} ansible_connection=local
+
+[all:vars]
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+EOF
+
+        save_env_kv "INSTALL_SCOPE" "remote"
+        save_env_kv "AAP_CONTROLLER_IP" "${ctl_ip}"
+        save_env_kv "AAP_CONTROLLER_FQDN" "${ctl_fqdn}"
+        break
+        ;;
+      *)
+        warn "Invalid option. Please select 1 or 2."
+        ;;
+    esac
+  done
 }
 
 main "$@"
