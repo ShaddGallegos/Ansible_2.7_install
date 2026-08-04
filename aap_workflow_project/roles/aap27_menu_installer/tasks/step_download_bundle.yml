@@ -1,0 +1,24 @@
+---
+- name: Ensure download dir exists
+  ansible.builtin.file:
+    path: "{{ aap27_menu_installer_download_dir }}"
+    state: directory
+    owner: admin
+    group: admin
+    mode: "0755"
+
+- name: Download AAP bundle
+  ansible.builtin.get_url:
+    url: "{{ aap27_menu_installer_bundle_url }}"
+    dest: "{{ aap27_menu_installer_download_dir }}/{{ aap27_menu_installer_bundle_file }}"
+    mode: "0644"
+    owner: admin
+    group: admin
+
+- name: Extract AAP bundle
+  ansible.builtin.unarchive:
+    src: "{{ aap27_menu_installer_download_dir }}/{{ aap27_menu_installer_bundle_file }}"
+    dest: "{{ aap27_menu_installer_download_dir }}"
+    remote_src: true
+    owner: admin
+    group: admin

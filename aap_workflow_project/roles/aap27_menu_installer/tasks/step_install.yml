@@ -1,0 +1,167 @@
+---
+- name: Ensure requested remote user is non-root
+  ansible.builtin.assert:
+    that:
+      - aap27_menu_installer_remote_user != 'root'
+    fail_msg: remote_user must be non-root for ansible.containerized_installer preflight checks
+
+- name: Validate requested execution playbook
+  ansible.builtin.assert:
+    that:
+      - aap27_menu_installer_execution_playbook in aap27_menu_installer_allowed_execution_playbooks
+    fail_msg: >-
+      execution_playbook '{{ aap27_menu_installer_execution_playbook }}' is invalid. Allowed values:
+      {{ aap27_menu_installer_allowed_execution_playbooks | join(', ') }}
+
+- name: Validate inventory-growth exists
+  ansible.builtin.stat:
+    path: "{{ aap27_menu_installer_inventory_file }}"
+  register: aap27_menu_installer_inventory_stat
+
+- name: Fail if inventory-growth missing
+  ansible.builtin.fail:
+    msg: "inventory-growth not found at {{ aap27_menu_installer_inventory_file }}"
+  when: not aap27_menu_installer_inventory_stat.stat.exists
+
+- name: Set collection patch target root
+  ansible.builtin.set_fact:
+    aap27_menu_installer_collection_target_root: >-
+      {{ aap27_menu_installer_bundle_dir }}/collections/ansible_collections/ansible/containerized_installer
+  when: aap27_menu_installer_apply_collection_patches | bool
+
+- name: Gather collection patch files from control node
+  ansible.builtin.find:
+    paths: "{{ aap27_menu_installer_collection_patch_root }}"
+    file_type: file
+  register: aap27_menu_installer_patch_files
+  delegate_to: localhost
+  become: false
+  when: aap27_menu_installer_apply_collection_patches | bool
+
+- name: Ensure patch destination directories exist
+  ansible.builtin.file:
+    path: "{{ aap27_menu_installer_collection_target_root }}/{{ relative_patch_path | dirname }}"
+    state: directory
+    owner: admin
+    group: admin
+    mode: "0755"
+  vars:
+    relative_patch_path: "{{ item.path | regex_replace('^' ~ (aap27_menu_installer_collection_patch_root | regex_escape) ~ '/', '') }}"
+  loop: "{{ aap27_menu_installer_patch_files.files | default([]) }}"
+  when: aap27_menu_installer_apply_collection_patches | bool
+
+- name: Copy collection patch files into extracted bundle
+  ansible.builtin.copy:
+    src: "{{ item.path }}"
+    dest: "{{ aap27_menu_installer_collection_target_root }}/{{ relative_patch_path }}"
+    owner: admin
+    group: admin
+    mode: "0644"
+  vars:
+    relative_patch_path: "{{ item.path | regex_replace('^' ~ (aap27_menu_installer_collection_patch_root | regex_escape) ~ '/', '') }}"
+  loop: "{{ aap27_menu_installer_patch_files.files | default([]) }}"
+  when: aap27_menu_installer_apply_collection_patches | bool
+
+- name: Build runtime inventory host line
+  ansible.builtin.set_fact:
+    aap27_menu_installer_runtime_host_line: >-
+      ansible_host={{ ansible_default_ipv4.address }} real_hostname={{ ansible_hostname }}
+      ansible_user={{ aap27_menu_installer_remote_user }} ansible_ssh_private_key_file={{ aap27_menu_installer_controller_ssh_key }}
+
+- name: Normalize non-vars host lines for runtime identity
+  ansible.builtin.replace:
+    path: "{{ aap27_menu_installer_inventory_file }}"
+    regexp: "^(?!#|\\[|\\s*$).+$"
+    replace: "{{ aap27_menu_installer_target_fqdn }} {{ aap27_menu_installer_runtime_host_line }}"
+
+- name: Replace example hostnames globally
+  ansible.builtin.replace:
+    path: "{{ aap27_menu_installer_inventory_file }}"
+    regexp: "aap\\.example\\.(com|org)"
+    replace: "aap {{ aap27_menu_installer_runtime_host_line }}"
+
+- name: Replace installer password placeholder
+  ansible.builtin.replace:
+    path: "{{ aap27_menu_installer_inventory_file }}"
+    regexp: "password=<set your own>"
+    replace: "password={{ aap27_menu_installer_admin_password }}"
+
+- name: Enable collections
+  ansible.builtin.replace:
+    path: "{{ aap27_menu_installer_inventory_file }}"
+    regexp: "collections=false"
+    replace: collections=true
+
+- name: Ensure all vars section exists
+  ansible.builtin.lineinfile:
+    path: "{{ aap27_menu_installer_inventory_file }}"
+    line: "[all:vars]"
+    state: present
+
+- name: Set required inventory all vars entries
+  ansible.builtin.blockinfile:
+    path: "{{ aap27_menu_installer_inventory_file }}"
+    marker: "# {mark} MANAGED BY AAP27 ROLE"
+    insertafter: "^\\[all:vars\\]$"
+    block: |
+      admin_password='{{ aap27_menu_installer_admin_password }}'
+      pg_admin_password='{{ aap27_menu_installer_admin_password }}'
+      registry_username='{{ aap27_menu_installer_registry_username }}'
+      registry_password='{{ aap27_menu_installer_registry_password }}'
+      ansible_user='{{ aap27_menu_installer_remote_user }}'
+      ansible_become='true'
+      ansible_become_method='sudo'
+      ansible_user_dir='{{ aap27_menu_installer_admin_home if aap27_menu_installer_remote_user == 'admin' else '/home/' ~ aap27_menu_installer_remote_user }}'
+      ansible_connection='ssh'
+      ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      redis_mode='standalone'
+
+- name: Resolve runtime remote user UID
+  ansible.builtin.command: "id -u {{ aap27_menu_installer_remote_user }}"
+  register: aap27_menu_installer_runtime_uid
+  changed_when: false
+
+- name: Build ansible-playbook command list
+  ansible.builtin.set_fact:
+    aap27_menu_installer_install_command:
+      - ansible-playbook
+      - "{{ aap27_menu_installer_ansible_verbosity }}"
+      - -i
+      - inventory-growth
+      - -u
+      - "{{ aap27_menu_installer_remote_user }}"
+      - -c
+      - ssh
+      - -e
+      - "ansible_user={{ aap27_menu_installer_remote_user }}"
+      - -e
+      - "ansible_user_uid={{ aap27_menu_installer_runtime_uid.stdout }}"
+      - -e
+      - ansible_become=true
+      - -e
+      - ansible_become_method=sudo
+      - -e
+      - ansible_connection=ssh
+      - -e
+      - "ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      - -e
+      - redis_mode=standalone
+      - -e
+      - "registry_username={{ aap27_menu_installer_registry_username }}"
+      - -e
+      - "registry_password={{ aap27_menu_installer_registry_password }}"
+      - "ansible.containerized_installer.{{ aap27_menu_installer_execution_playbook }}"
+
+- name: Remove empty verbosity argument
+  ansible.builtin.set_fact:
+    aap27_menu_installer_install_command: "{{ aap27_menu_installer_install_command | reject('equalto', '') | list }}"
+
+- name: Run selected AAP containerized installer playbook
+  become: true
+  become_user: admin
+  ansible.builtin.command:
+    argv: "{{ aap27_menu_installer_install_command }}"
+  args:
+    chdir: "{{ aap27_menu_installer_bundle_dir }}"
+  register: aap27_menu_installer_install_result
+  changed_when: true

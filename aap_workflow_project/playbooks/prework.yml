@@ -1,0 +1,162 @@
+---
+- name: AAP prework on target host
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    disable_firewall_for_install: "{{ disable_firewall_for_install | default(true) }}"
+    set_selinux_permissive_for_install: "{{ set_selinux_permissive_for_install | default(true) }}"
+    effective_registry_username: "{{ rhsm_username | default(registry_username | default('')) }}"
+    effective_registry_password: "{{ rhsm_password | default(registry_password | default('')) }}"
+    installer_user: "{{ remote_user | default(machine_credential_username | default('admin')) }}"
+
+  tasks:
+    - name: Install required packages (best effort)
+      ansible.builtin.dnf:
+        name:
+          - sudo
+          - openssh-server
+          - openssh-clients
+          - policycoreutils-python-utils
+          - tar
+          - gzip
+          - curl
+          - jq
+          - rsync
+          - podman
+          - podman-docker
+          - python3
+          - python3-pip
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Ensure installer user exists for rootless podman
+      ansible.builtin.user:
+        name: "{{ installer_user }}"
+        shell: /bin/bash
+        create_home: true
+        state: present
+
+    - name: Ensure subuid entry exists for installer user
+      ansible.builtin.lineinfile:
+        path: /etc/subuid
+        regexp: "^{{ installer_user }}:"
+        line: "{{ installer_user }}:100000:65536"
+        create: true
+        mode: "0644"
+        state: present
+
+    - name: Ensure subgid entry exists for installer user
+      ansible.builtin.lineinfile:
+        path: /etc/subgid
+        regexp: "^{{ installer_user }}:"
+        line: "{{ installer_user }}:100000:65536"
+        create: true
+        mode: "0644"
+        state: present
+
+    - name: Enable lingering for installer user
+      ansible.builtin.command: loginctl enable-linger {{ installer_user }}
+      changed_when: false
+      failed_when: false
+
+    - name: Get installer user UID
+      ansible.builtin.command: id -u {{ installer_user }}
+      register: installer_uid
+      changed_when: false
+
+    - name: Ensure user manager is running for installer user
+      ansible.builtin.systemd:
+        name: "user@{{ installer_uid.stdout }}"
+        state: started
+      failed_when: false
+
+    - name: Wait for installer user DBus socket
+      ansible.builtin.wait_for:
+        path: "/run/user/{{ installer_uid.stdout }}/bus"
+        timeout: 30
+      failed_when: false
+
+    - name: Enable rootless podman socket for installer user
+      become: true
+      become_user: "{{ installer_user }}"
+      ansible.builtin.systemd_service:
+        name: podman.socket
+        enabled: true
+        state: started
+        scope: user
+      failed_when: false
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ installer_uid.stdout }}"
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ installer_uid.stdout }}/bus"
+
+    - name: Ensure DOCKER_HOST compatibility variable in installer user .bashrc
+      ansible.builtin.lineinfile:
+        path: "/home/{{ installer_user }}/.bashrc"
+        regexp: '^export DOCKER_HOST="unix://\$XDG_RUNTIME_DIR/podman/podman.sock"$'
+        line: 'export DOCKER_HOST="unix://$XDG_RUNTIME_DIR/podman/podman.sock"'
+        create: true
+        mode: "0644"
+
+    - name: Enable rootful podman socket service
+      ansible.builtin.systemd:
+        name: podman.socket
+        enabled: true
+        state: started
+      failed_when: false
+
+    - name: Run podman system migrate for installer user
+      become: true
+      become_user: "{{ installer_user }}"
+      ansible.builtin.command: podman system migrate
+      changed_when: false
+      failed_when: false
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ installer_uid.stdout }}"
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ installer_uid.stdout }}/bus"
+
+    - name: Login to registry.redhat.io as installer user (rootless podman)
+      become: true
+      become_user: "{{ installer_user }}"
+      ansible.builtin.shell: |
+        set -o pipefail
+        printf '%s\n' {{ effective_registry_password | quote }} | \
+        podman login registry.redhat.io --username {{ effective_registry_username | quote }} --password-stdin
+      args:
+        executable: /bin/bash
+      no_log: true
+      changed_when: false
+      failed_when: false
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ installer_uid.stdout }}"
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ installer_uid.stdout }}/bus"
+      when:
+        - effective_registry_username | length > 0
+        - effective_registry_password | length > 0
+
+    - name: Show podman socket configuration summary
+      ansible.builtin.debug:
+        msg:
+          - "rootless podman.socket requested for {{ installer_user }}"
+          - "rootful podman.socket requested for system scope"
+
+    - name: Disable firewalld for installation
+      ansible.builtin.systemd:
+        name: firewalld
+        state: stopped
+        enabled: false
+      when: disable_firewall_for_install | bool
+
+    - name: Set runtime SELinux permissive
+      ansible.builtin.command: setenforce 0
+      changed_when: false
+      failed_when: false
+      when: set_selinux_permissive_for_install | bool
+
+    - name: Set SELinux config permissive
+      ansible.builtin.replace:
+        path: /etc/selinux/config
+        regexp: "^SELINUX=.*"
+        replace: "SELINUX=permissive"
+      when: set_selinux_permissive_for_install | bool

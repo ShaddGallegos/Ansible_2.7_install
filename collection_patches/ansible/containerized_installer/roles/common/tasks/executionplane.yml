@@ -1,0 +1,87 @@
+---
+- name: Create the custom podman rootless storage folder
+  ansible.builtin.file:
+    path: "{{ ansible_user_dir }}/aap/containers/storage"
+    mode: "0770"
+    setype: data_home_t
+    state: directory
+
+- name: Create custom podman storage.conf
+  ansible.builtin.template:
+    src: storage.conf.j2
+    dest: "{{ ansible_user_dir }}/aap/containers/storage.conf"
+    mode: "0640"
+
+- name: Create directory for custom podman service configuration
+  ansible.builtin.file:
+    dest: "{{ ansible_user_dir }}/.config/systemd/user/podman.service.d"
+    mode: "0770"
+    state: directory
+
+- name: Configure podman service
+  ansible.builtin.template:
+    src: override.conf.j2
+    dest: "{{ ansible_user_dir }}/.config/systemd/user/podman.service.d/override.conf"
+    mode: "0644"
+
+- name: Ensure lingering enabled for ansible user
+  ansible.builtin.command:
+    cmd: "loginctl enable-linger {{ ansible_user }}"
+  become: true
+  changed_when: false
+  failed_when: false
+
+- name: Ensure user systemd runtime directory exists
+  ansible.builtin.file:
+    path: "/run/user/{{ ansible_user_uid }}"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0700"
+  become: true
+
+- name: Ensure user systemd instance is started
+  ansible.builtin.command:
+    cmd: "systemctl start user@{{ ansible_user_uid }}.service"
+  become: true
+  changed_when: false
+  failed_when: false
+
+- name: Wait for user DBus socket
+  ansible.builtin.wait_for:
+    path: "/run/user/{{ ansible_user_uid }}/bus"
+    state: started
+    timeout: 30
+  become: true
+  failed_when: false
+
+- name: Enable podman socket
+  block:
+    - name: Enable podman socket via systemd module
+      become: true
+      become_user: "{{ ansible_user }}"
+      ansible.builtin.systemd:
+        name: podman.socket
+        state: started
+        scope: user
+        enabled: true
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ ansible_user_uid }}"
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ ansible_user_uid }}/bus"
+  rescue:
+    - name: Enable podman socket via command fallback
+      become: true
+      become_user: "{{ ansible_user }}"
+      ansible.builtin.shell: |
+        systemctl --user daemon-reload
+        systemctl --user enable --now podman.socket
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ ansible_user_uid }}"
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ ansible_user_uid }}/bus"
+      changed_when: true
+
+- name: Create podman custom command
+  ansible.builtin.copy:
+    src: podman
+    dest: "{{ ansible_user_dir }}/aap/containers/podman"
+    mode: "0755"

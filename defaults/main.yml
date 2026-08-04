@@ -1,0 +1,4 @@
+---
+ansible_2_7_install_use_local_defaults_env: true
+ansible_2_7_install_defaults_env_file: "{{ playbook_dir | dirname }}/defaults/env.yml"
+ansible_2_7_install_local_defaults_precedence: "noninteractive"

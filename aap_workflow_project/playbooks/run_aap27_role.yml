@@ -1,0 +1,8 @@
+---
+- name: Run AAP 2.7 workflow role
+  hosts: all
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: aap27_menu_installer

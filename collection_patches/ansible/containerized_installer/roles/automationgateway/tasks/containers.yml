@@ -1,0 +1,258 @@
+---
+- name: Set gateway user namespace compatibility mode
+  ansible.builtin.set_fact:
+    # Keep-id can cause supervisord/runtime permission failures in this gateway image.
+    # Run with image-default user to maximize compatibility across host runtimes.
+    automationgateway_use_keep_id: false
+  changed_when: false
+
+- name: Check gateway TLS private key on host
+  ansible.builtin.stat:
+    path: /etc/ansible-automation-platform/gateway/gateway.key
+  register: automationgateway_tls_key_stat
+  become: true
+
+- name: Ensure gateway TLS directory is accessible to container runtime user
+  ansible.builtin.file:
+    path: /etc/ansible-automation-platform/gateway
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0750"
+  become: true
+
+- name: Ensure gateway TLS private key is readable by ansible user
+  ansible.builtin.file:
+    path: /etc/ansible-automation-platform/gateway/gateway.key
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0644"
+  become: true
+  when: automationgateway_tls_key_stat.stat.exists | bool
+
+- name: Check gateway TLS certificate on host
+  ansible.builtin.stat:
+    path: /etc/ansible-automation-platform/gateway/gateway.crt
+  register: automationgateway_tls_crt_stat
+  become: true
+
+- name: Ensure gateway TLS certificate is readable by ansible user
+  ansible.builtin.file:
+    path: /etc/ansible-automation-platform/gateway/gateway.crt
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0644"
+  become: true
+  when: automationgateway_tls_crt_stat.stat.exists | bool
+
+- name: Check gateway redis cert/key on host
+  ansible.builtin.stat:
+    path: '{{ gateway_conf_dir }}/redis.key'
+  register: automationgateway_redis_key_stat
+  become: true
+
+- name: Ensure gateway redis key is readable by container runtime user
+  ansible.builtin.file:
+    path: '{{ gateway_conf_dir }}/redis.key'
+    owner: '{{ ansible_user }}'
+    group: '{{ ansible_user }}'
+    mode: '0644'
+  become: true
+  when: automationgateway_redis_key_stat.stat.exists | bool
+
+- name: Ensure gateway redis cert is readable by container runtime user
+  ansible.builtin.file:
+    path: '{{ gateway_conf_dir }}/redis.cert'
+    owner: '{{ ansible_user }}'
+    group: '{{ ansible_user }}'
+    mode: '0644'
+  become: true
+  when: automationgateway_redis_key_stat.stat.exists | bool
+
+- name: Ensure gateway config directory is traversable for mounted runtime files
+  ansible.builtin.file:
+    path: "{{ gateway_conf_dir }}"
+    state: directory
+    mode: "0755"
+  become: true
+
+- name: Ensure gateway runtime config files are readable by container service user
+  ansible.builtin.command:
+    cmd: /usr/bin/chmod 0644 {{ item }}
+  loop:
+    - "{{ gateway_conf_dir }}/settings.py"
+    - "{{ gateway_conf_dir }}/supervisord.conf"
+    - "{{ gateway_conf_dir }}/uwsgi.ini"
+  become: true
+  changed_when: false
+  failed_when: false
+
+- name: Normalize gateway bind mount sources for rootless runtime
+  ansible.builtin.set_fact:
+    _web_volumes: >-
+      {{
+        _web_volumes
+        | map(
+            'regex_replace',
+            '^/root/aap/tls/extracted:/etc/pki/ca-trust/extracted(:.*)?$',
+            _gateway_user_home ~ '/aap/tls/extracted:/etc/pki/ca-trust/extracted:z'
+          )
+        | map(
+            'regex_replace',
+            '^[^:]+/aap/tls/extracted:/etc/pki/ca-trust/extracted(:.*)?$',
+            _gateway_user_home ~ '/aap/tls/extracted:/etc/pki/ca-trust/extracted:z'
+          )
+        | map(
+            'regex_replace',
+            '^[^:]+/aap/controller/supervisor/run:/run/supervisor(:.*)?$',
+            _gateway_user_home ~ '/aap/gateway/supervisor/run:/run/supervisor:z'
+          )
+        | map(
+            'regex_replace',
+            '^[^:]+/aap/[^:]+/supervisor/run:/run/supervisor(:.*)?$',
+            _gateway_user_home ~ '/aap/gateway/supervisor/run:/run/supervisor:z'
+          )
+        | list
+      }}
+    _envoy_volumes: >-
+      {{
+        _envoy_volumes
+        | map(
+            'regex_replace',
+            '^/root/aap/tls/extracted:/etc/pki/ca-trust/extracted(:.*)?$',
+            _gateway_user_home ~ '/aap/tls/extracted:/etc/pki/ca-trust/extracted:z'
+          )
+        | map(
+            'regex_replace',
+            '^[^:]+/aap/tls/extracted:/etc/pki/ca-trust/extracted(:.*)?$',
+            _gateway_user_home ~ '/aap/tls/extracted:/etc/pki/ca-trust/extracted:z'
+          )
+        | map(
+            'regex_replace',
+            '^[^:]+/aap/controller/supervisor/run:/run/supervisor(:.*)?$',
+            _gateway_user_home ~ '/aap/gateway/supervisor/run:/run/supervisor:z'
+          )
+        | map(
+            'regex_replace',
+            '^[^:]+/aap/[^:]+/supervisor/run:/run/supervisor(:.*)?$',
+            _gateway_user_home ~ '/aap/gateway/supervisor/run:/run/supervisor:z'
+          )
+        | list
+      }}
+
+- name: Ensure normalized gateway bind directories exist on host
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0755"
+  loop:
+    - "{{ _gateway_user_home }}/aap/tls/extracted"
+    - "{{ _gateway_user_home }}/aap/gateway/supervisor/run"
+  become: true
+
+- name: Ensure gateway supervisor runtime directory is writable by container service user
+  ansible.builtin.file:
+    path: "{{ _gateway_user_home }}/aap/gateway/supervisor/run"
+    state: directory
+    mode: "0777"
+  become: true
+
+- name: Remove stale supervisor runtime artifacts on host
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ _gateway_user_home }}/aap/gateway/supervisor/run/supervisor.sock"
+    - "{{ _gateway_user_home }}/aap/gateway/supervisor/run/supervisord.pid"
+  become: true
+
+- name: Remove existing automation gateway proxy container if present
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  ansible.builtin.shell: |
+    set -euo pipefail
+    podman rm -f automation-gateway-proxy >/dev/null 2>&1 || true
+  args:
+    executable: /bin/bash
+  changed_when: false
+  failed_when: false
+
+- name: Remove existing automation gateway container if present
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  ansible.builtin.shell: |
+    set -euo pipefail
+    podman rm -f automation-gateway >/dev/null 2>&1 || true
+  args:
+    executable: /bin/bash
+  changed_when: false
+  failed_when: false
+
+- name: Create the automation gateway proxy container
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  containers.podman.podman_container:
+    name: automation-gateway-proxy
+    image: "{{ _gateway_proxy_image }}"
+    systemd: false
+    cgroups: disabled
+    generate_systemd:
+      container_prefix: ""
+      path: "{{ _gateway_user_home }}/.config/systemd/user"
+      separator: ""
+    log_driver: "{{ container_log_driver }}"
+    user: "{{ ansible_user_uid if automationgateway_use_keep_id | bool else omit }}"
+    userns: "{{ 'keep-id' if automationgateway_use_keep_id | bool else omit }}"
+    security_opt:
+      - label=disable
+    network: host
+    command: "/usr/bin/envoy --config-path /etc/envoy/envoy.yaml --log-path /dev/stdout"
+    volume: "{{ _envoy_volumes }}"
+    label: "{{ _autoupdate_label }}"
+    state: created
+    recreate: true
+  notify: Restart automation gateway proxy
+
+- name: Create the automation gateway container
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  containers.podman.podman_container:
+    name: automation-gateway
+    image: "{{ _gateway_image }}"
+    command: "/usr/bin/supervisord --configuration /etc/supervisord.conf"
+    systemd: false
+    cgroups: disabled
+    generate_systemd:
+      container_prefix: ""
+      path: "{{ _gateway_user_home }}/.config/systemd/user"
+      separator: ""
+    log_driver: "{{ container_log_driver }}"
+    user: "{{ ansible_user_uid if automationgateway_use_keep_id | bool else omit }}"
+    userns: "{{ 'keep-id' if automationgateway_use_keep_id | bool else omit }}"
+    security_opt:
+      - label=disable
+    network: host
+    mount:
+      - "type=tmpfs,destination=/run/nginx,U=true"
+      - "type=tmpfs,destination=/var/cache/ansible-automation-platform/gateway,U=true"
+    secrets: "{{ _django_secrets }}"
+    volume: "{{ _web_volumes }}"
+    env: "{{ _common_env }}"
+    label: "{{ _autoupdate_label }}"
+    state: created
+    recreate: true
+  notify: Restart automation gateway

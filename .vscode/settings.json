@@ -1,0 +1,10 @@
+{
+  "python.analysis.exclude": [
+    "**/node_modules",
+    "**/.*",
+    "**/venv",
+    "**/.venv",
+    "**/build",
+    "**/dist"
+  ]
+}

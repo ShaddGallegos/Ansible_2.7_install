@@ -1,0 +1,604 @@
+---
+- name: Re-apply automation gateway container definitions before startup checks
+  ansible.builtin.include_tasks: containers.yml
+  run_once: true
+
+- name: Ensure automation gateway container is running before initialization
+  block:
+    - name: Start automation gateway container
+      become: true
+      become_user: '{{ ansible_user }}'
+      environment:
+        XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+        DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+      containers.podman.podman_container:
+        name: automation-gateway
+        state: started
+      run_once: true
+      register: automationgateway_start_initial
+      failed_when: false
+
+    - name: Recreate automation gateway containers after start race/failure
+      ansible.builtin.include_tasks: containers.yml
+      run_once: true
+      when: >-
+        (automationgateway_start_initial.msg | default('')) is search(
+          'container state improper|must be in Created or Stopped state|exited with code'
+        )
+
+    - name: Retry start automation gateway container after recreate
+      become: true
+      become_user: '{{ ansible_user }}'
+      environment:
+        XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+        DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+      containers.podman.podman_container:
+        name: automation-gateway
+        state: started
+      run_once: true
+      register: automationgateway_start_retry
+      failed_when: false
+      when: >-
+        (automationgateway_start_initial.msg | default('')) is search(
+          'container state improper|must be in Created or Stopped state|exited with code'
+        )
+
+    - name: Fail when gateway container still does not start after recreate
+      ansible.builtin.fail:
+        msg: "{{ automationgateway_start_retry.get('msg', 'Container automation-gateway failed to start after recreate') }}"
+      when:
+        - automationgateway_start_retry is defined
+        - (automationgateway_start_retry.get('msg', '') | length) > 0
+
+    - name: Fail when gateway start failed unexpectedly
+      ansible.builtin.fail:
+        msg: "{{ automationgateway_start_initial.get('msg', 'Container automation-gateway failed to start') }}"
+      when:
+        - (automationgateway_start_initial.get('msg', '') | length) > 0
+        - (automationgateway_start_initial.get('msg', '')) is not search('container state improper|must be in Created or Stopped state|exited with code')
+
+- name: Check automation gateway container running state before TLS remediation
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  ansible.builtin.command:
+    cmd: podman inspect -f {{ '{{' }}.State.Running{{ '}}' }} automation-gateway
+  register: automationgateway_running_state
+  changed_when: false
+  failed_when: false
+  run_once: true
+
+- name: Discover host source path for gateway TLS private key bind mount
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  ansible.builtin.command:
+    cmd: >-
+      podman inspect --format '{{ '{{ range .Mounts }}{{ if eq .Destination "/etc/ansible-automation-platform/gateway/gateway.key" }}{{ .Source }}{{ end }}{{ end }}' }}' automation-gateway
+  register: automationgateway_tls_key_host_path
+  changed_when: false
+  failed_when: false
+  run_once: true
+
+- name: Discover host source path for gateway TLS certificate bind mount
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  ansible.builtin.command:
+    cmd: >-
+      podman inspect --format '{{ '{{ range .Mounts }}{{ if eq .Destination "/etc/ansible-automation-platform/gateway/gateway.crt" }}{{ .Source }}{{ end }}{{ end }}' }}' automation-gateway
+  register: automationgateway_tls_crt_host_path
+  changed_when: false
+  failed_when: false
+  run_once: true
+
+- name: Ensure gateway TLS source directory is traversable by runtime user on host
+  ansible.builtin.file:
+    path: "{{ automationgateway_tls_key_host_path.stdout | trim | dirname }}"
+    state: directory
+    owner: "{{ ansible_user_id | default(ansible_user) }}"
+    group: "{{ ansible_user_id | default(ansible_user) }}"
+    mode: "0755"
+  become: true
+  register: automationgateway_tls_source_dir_fix
+  when:
+    - (automationgateway_tls_key_host_path.stdout | trim | length) > 0
+
+- name: Ensure gateway TLS private key source permissions on host
+  ansible.builtin.file:
+    path: "{{ automationgateway_tls_key_host_path.stdout | trim }}"
+    owner: "{{ ansible_user_id | default(ansible_user) }}"
+    group: "{{ ansible_user_id | default(ansible_user) }}"
+    mode: "0644"
+  become: true
+  register: automationgateway_tls_source_key_fix
+  when:
+    - (automationgateway_tls_key_host_path.stdout | trim | length) > 0
+
+- name: Ensure gateway TLS certificate source permissions on host
+  ansible.builtin.file:
+    path: "{{ automationgateway_tls_crt_host_path.stdout | trim }}"
+    owner: "{{ ansible_user_id | default(ansible_user) }}"
+    group: "{{ ansible_user_id | default(ansible_user) }}"
+    mode: "0644"
+  become: true
+  register: automationgateway_tls_source_crt_fix
+  when:
+    - (automationgateway_tls_crt_host_path.stdout | trim | length) > 0
+
+- name: Restart automation gateway container after TLS source permission remediation
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  ansible.builtin.command:
+    cmd: podman restart automation-gateway
+  register: automationgateway_restart_after_tls
+  changed_when: automationgateway_restart_after_tls.rc == 0
+  failed_when: false
+  run_once: true
+  when: >-
+    (automationgateway_tls_source_dir_fix is defined and automationgateway_tls_source_dir_fix.changed)
+    or (automationgateway_tls_source_key_fix is defined and automationgateway_tls_source_key_fix.changed)
+    or (automationgateway_tls_source_crt_fix is defined and automationgateway_tls_source_crt_fix.changed)
+
+- name: Recreate automation gateway containers when restart fails in improper state
+  ansible.builtin.include_tasks: containers.yml
+  run_once: true
+  when:
+    - automationgateway_restart_after_tls is defined
+    - automationgateway_restart_after_tls.rc != 0
+    - (automationgateway_restart_after_tls.stderr | default('')) is search('container state improper|paused or unknown state|must be in Created or Stopped state')
+
+- name: Ensure automation gateway container is started before TLS checks
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  containers.podman.podman_container:
+    name: automation-gateway
+    state: started
+  run_once: true
+  register: automationgateway_start_before_tls
+  failed_when: false
+
+- name: Verify automation gateway container is running after TLS remediation
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  ansible.builtin.command:
+    cmd: podman inspect -f {{ '{{' }}.State.Running{{ '}}' }} automation-gateway
+  register: automationgateway_running_after_tls
+  changed_when: false
+  failed_when: false
+  run_once: true
+  retries: 10
+  delay: 3
+  until: automationgateway_running_after_tls.stdout | trim == 'true'
+
+- name: Gather automation gateway status when container is not running after TLS remediation
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  ansible.builtin.command:
+    cmd: podman ps -a --filter name=automation-gateway --format '{{ '{{.Names}} {{.Status}}' }}'
+  register: automationgateway_status_after_tls
+  changed_when: false
+  failed_when: false
+  run_once: true
+  when: automationgateway_running_after_tls.stdout | trim != 'true'
+
+- name: Gather automation gateway logs when container is not running after TLS remediation
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  ansible.builtin.command:
+    cmd: podman logs --tail 200 automation-gateway
+  register: automationgateway_logs_after_tls
+  changed_when: false
+  failed_when: false
+  run_once: true
+  when: automationgateway_running_after_tls.stdout | trim != 'true'
+
+- name: Recreate automation gateway containers when not running after TLS remediation
+  ansible.builtin.include_tasks: containers.yml
+  run_once: true
+  when: automationgateway_running_after_tls.stdout | trim != 'true'
+
+- name: Retry start automation gateway container after final recreate
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  containers.podman.podman_container:
+    name: automation-gateway
+    state: started
+  run_once: true
+  register: automationgateway_start_final_retry
+  failed_when: false
+  when: automationgateway_running_after_tls.stdout | trim != 'true'
+
+- name: Verify automation gateway running state after final recreate
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  ansible.builtin.command:
+    cmd: podman inspect -f {{ '{{' }}.State.Running{{ '}}' }} automation-gateway
+  register: automationgateway_running_after_tls_final
+  changed_when: false
+  failed_when: false
+  run_once: true
+  when: automationgateway_running_after_tls.stdout | trim != 'true'
+
+- name: Gather automation gateway container state diagnostics when still not running
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  ansible.builtin.command:
+    cmd: podman inspect --format '{{ '{{ json .State }}' }}' automation-gateway
+  register: automationgateway_state_after_tls
+  changed_when: false
+  failed_when: false
+  run_once: true
+  when:
+    - automationgateway_running_after_tls.stdout | trim != 'true'
+    - automationgateway_running_after_tls_final.stdout | default('false') | trim != 'true'
+
+- name: Attempt direct automation gateway start for stderr diagnostics
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  ansible.builtin.command:
+    cmd: podman start automation-gateway
+  register: automationgateway_direct_start_after_tls
+  changed_when: false
+  failed_when: false
+  run_once: true
+  when:
+    - automationgateway_running_after_tls.stdout | trim != 'true'
+    - automationgateway_running_after_tls_final.stdout | default('false') | trim != 'true'
+
+- name: Attempt attached automation gateway start for foreground stderr diagnostics
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  ansible.builtin.command:
+    cmd: podman start -a automation-gateway
+  register: automationgateway_direct_start_attached_after_tls
+  changed_when: false
+  failed_when: false
+  run_once: true
+  when:
+    - automationgateway_running_after_tls.stdout | trim != 'true'
+    - automationgateway_running_after_tls_final.stdout | default('false') | trim != 'true'
+
+- name: Gather automation gateway launch command diagnostics when still not running
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  ansible.builtin.command:
+    cmd: podman inspect --format '{{ '{{ json .Config.Entrypoint }}' }} {{ '{{ json .Config.Cmd }}' }}' automation-gateway
+  register: automationgateway_cmd_after_tls
+  changed_when: false
+  failed_when: false
+  run_once: true
+  when:
+    - automationgateway_running_after_tls.stdout | trim != 'true'
+    - automationgateway_running_after_tls_final.stdout | default('false') | trim != 'true'
+
+- name: Gather automation gateway env diagnostics when still not running
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  ansible.builtin.command:
+    cmd: podman inspect --format '{{ '{{ json .Config.Env }}' }}' automation-gateway
+  register: automationgateway_env_after_tls
+  changed_when: false
+  failed_when: false
+  run_once: true
+  when:
+    - automationgateway_running_after_tls.stdout | trim != 'true'
+    - automationgateway_running_after_tls_final.stdout | default('false') | trim != 'true'
+
+- name: Gather automation gateway mount diagnostics when still not running
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  ansible.builtin.command:
+    cmd: podman inspect --format '{{ '{{ json .Mounts }}' }}' automation-gateway
+  register: automationgateway_mounts_after_tls
+  changed_when: false
+  failed_when: false
+  run_once: true
+  when:
+    - automationgateway_running_after_tls.stdout | trim != 'true'
+    - automationgateway_running_after_tls_final.stdout | default('false') | trim != 'true'
+
+- name: Fail when automation gateway container is not running after TLS remediation
+  ansible.builtin.fail:
+    msg: >-
+      automation-gateway is not running after TLS remediation.
+      Initial running state: {{ automationgateway_running_state.stdout | default('n/a') | trim }}.
+      Start task message: {{ automationgateway_start_before_tls.msg | default('n/a') }}.
+      Final recreate/start message: {{ automationgateway_start_final_retry.msg | default('n/a') }}.
+      Direct start rc/stdout/stderr: {{ automationgateway_direct_start_after_tls.rc | default('n/a') }} / {{ automationgateway_direct_start_after_tls.stdout | default('') }} / {{ automationgateway_direct_start_after_tls.stderr | default('') }}.
+      Attached start rc/stdout/stderr: {{ automationgateway_direct_start_attached_after_tls.rc | default('n/a') }} / {{ automationgateway_direct_start_attached_after_tls.stdout | default('') }} / {{ automationgateway_direct_start_attached_after_tls.stderr | default('') }}.
+      Current status: {{ automationgateway_status_after_tls.stdout | default('n/a') }}.
+      Container state diagnostics:
+      {{ automationgateway_state_after_tls.stdout | default('n/a') }}.
+      Container launch command diagnostics:
+      {{ automationgateway_cmd_after_tls.stdout | default('n/a') }}.
+      Container environment diagnostics:
+      {{ automationgateway_env_after_tls.stdout | default('n/a') }}.
+      Container mount diagnostics:
+      {{ automationgateway_mounts_after_tls.stdout | default('n/a') }}.
+      Container logs:
+      {{ automationgateway_logs_after_tls.stdout | default('n/a') }}
+  when:
+    - automationgateway_running_after_tls.stdout | trim != 'true'
+    - automationgateway_running_after_tls_final.stdout | default('false') | trim != 'true'
+
+- name: Ensure gateway TLS path and files are readable inside automation gateway container
+  ansible.builtin.command:
+    cmd: >-
+      podman exec --user 0 automation-gateway /bin/sh -c
+      "if [ -d /etc/ansible-automation-platform ]; then chmod 0755 /etc/ansible-automation-platform || true; fi;
+      if [ -d /etc/ansible-automation-platform/gateway ]; then chmod 0755 /etc/ansible-automation-platform/gateway || true; fi;
+      if [ -f /etc/ansible-automation-platform/gateway/gateway.key ]; then chmod 0644 /etc/ansible-automation-platform/gateway/gateway.key; fi;
+      if [ -f /etc/ansible-automation-platform/gateway/gateway.crt ]; then chmod 0644 /etc/ansible-automation-platform/gateway/gateway.crt; fi"
+  register: automationgateway_tls_fix
+  changed_when: false
+  failed_when: false
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  run_once: true
+  when: automationgateway_running_after_tls_final.stdout | default(automationgateway_running_after_tls.stdout) | trim == 'true'
+
+- name: Re-check automation gateway running state before TLS readability validation
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  ansible.builtin.command:
+    cmd: podman inspect -f {{ '{{' }}.State.Running{{ '}}' }} automation-gateway
+  register: automationgateway_running_before_tls_checks
+  changed_when: false
+  failed_when: false
+  run_once: true
+  when: automationgateway_running_after_tls_final.stdout | default(automationgateway_running_after_tls.stdout) | trim == 'true'
+
+- name: Gather gateway status when container stopped before TLS checks
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  ansible.builtin.command:
+    cmd: podman ps -a --filter name=automation-gateway --format '{{ '{{.Names}} {{.Status}}' }}'
+  register: automationgateway_status_before_tls_checks
+  changed_when: false
+  failed_when: false
+  run_once: true
+  when:
+    - automationgateway_running_before_tls_checks is defined
+    - automationgateway_running_before_tls_checks.stdout | trim != 'true'
+
+- name: Gather gateway logs when container stopped before TLS checks
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  ansible.builtin.command:
+    cmd: podman logs --tail 200 automation-gateway
+  register: automationgateway_logs_before_tls_checks
+  changed_when: false
+  failed_when: false
+  run_once: true
+  when:
+    - automationgateway_running_before_tls_checks is defined
+    - automationgateway_running_before_tls_checks.stdout | trim != 'true'
+
+- name: Fail when gateway container stopped before TLS checks
+  ansible.builtin.fail:
+    msg: >-
+      automation-gateway stopped before TLS readability checks.
+      Running state just before TLS checks: {{ automationgateway_running_before_tls_checks.stdout | default('n/a') | trim }}.
+      Current status: {{ automationgateway_status_before_tls_checks.stdout | default('n/a') }}.
+      Logs:
+      {{ automationgateway_logs_before_tls_checks.stdout | default('n/a') }}
+  run_once: true
+  when:
+    - automationgateway_running_before_tls_checks is defined
+    - automationgateway_running_before_tls_checks.stdout | trim != 'true'
+
+- name: Validate gateway TLS private key readability inside container
+  ansible.builtin.command:
+    cmd: >-
+      podman exec automation-gateway /bin/sh -c
+      "test -r /etc/ansible-automation-platform/gateway/gateway.key"
+  register: automationgateway_tls_key_readable
+  changed_when: false
+  failed_when: false
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  run_once: true
+  when:
+    - automationgateway_running_after_tls_final.stdout | default(automationgateway_running_after_tls.stdout) | trim == 'true'
+    - automationgateway_running_before_tls_checks.stdout | default('false') | trim == 'true'
+
+- name: Gather gateway TLS diagnostics from inside container when key is not readable
+  ansible.builtin.command:
+    cmd: >-
+      podman exec --user 0 automation-gateway /bin/sh -c
+      "id;
+      ls -ld /etc /etc/ansible-automation-platform /etc/ansible-automation-platform/gateway;
+      ls -l /etc/ansible-automation-platform/gateway/gateway.key /etc/ansible-automation-platform/gateway/gateway.crt 2>/dev/null || true;
+      ls -lZ /etc/ansible-automation-platform/gateway/gateway.key /etc/ansible-automation-platform/gateway/gateway.crt 2>/dev/null || true"
+  register: automationgateway_tls_diag_container
+  changed_when: false
+  failed_when: false
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  run_once: true
+  when: automationgateway_tls_key_readable.rc != 0
+
+- name: Gather gateway mount diagnostics when key is not readable
+  ansible.builtin.command:
+    cmd: >-
+      podman inspect --format '{{ '{{ json .Mounts }}' }}' automation-gateway
+  register: automationgateway_tls_diag_mounts
+  changed_when: false
+  failed_when: false
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  run_once: true
+  when: automationgateway_tls_key_readable.rc != 0
+
+- name: Fail when gateway TLS private key is not readable inside container
+  ansible.builtin.fail:
+    msg: >-
+      gateway.key is not readable inside automation-gateway container.
+      Inspect /etc/ansible-automation-platform/gateway/gateway.key ownership/permissions
+      and SELinux context on host and inside container.
+      Readability check rc/stdout/stderr:
+      {{ automationgateway_tls_key_readable.rc | default('n/a') }} /
+      {{ automationgateway_tls_key_readable.stdout | default('') }} /
+      {{ automationgateway_tls_key_readable.stderr | default('') }}
+      Container diagnostics:
+      {{ automationgateway_tls_diag_container.stdout | default('n/a') }}
+      Container diagnostics stderr:
+      {{ automationgateway_tls_diag_container.stderr | default('n/a') }}
+      Mount diagnostics:
+      {{ automationgateway_tls_diag_mounts.stdout | default('n/a') }}
+  when: automationgateway_tls_key_readable.rc != 0
+
+- name: Wait for automation gateway manage CLI availability
+  ansible.builtin.command:
+    cmd: podman exec automation-gateway aap-gateway-manage --help
+  register: automationgateway_manage_cli
+  changed_when: false
+  failed_when: false
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  run_once: true
+  retries: 30
+  delay: 5
+  until: automationgateway_manage_cli.rc == 0
+
+- name: Initialize the automation gateway database
+  ansible.builtin.command:
+    cmd: podman exec automation-gateway aap-gateway-manage migrate --noinput
+  register: automationgateway_migrate
+  changed_when: "'No migrations to apply' not in automationgateway_migrate.stdout"
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  run_once: true
+  retries: 5
+  delay: 60
+  until: automationgateway_migrate is not failed
+
+- name: Create django super user
+  ansible.builtin.command:
+    cmd: >-
+      podman exec automation-gateway aap-gateway-manage createsuperuser
+      --username={{ gateway_admin_user }} --email={{ gateway_admin_email }}
+      --noinput
+  register: automationgateway_createsuperuser
+  changed_when: "'Superuser created successfully' in automationgateway_createsuperuser.stdout"
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  failed_when:
+    - "'That username is already taken' not in automationgateway_createsuperuser.stderr"
+    - "'Superuser created successfully' not in automationgateway_createsuperuser.stdout"
+  run_once: true
+  retries: 5
+  delay: 60
+  until: automationgateway_createsuperuser is not failed
+
+- name: Update django super user password
+  ansible.builtin.command:
+    cmd: >-
+      podman exec automation-gateway aap-gateway-manage update_password
+      --username={{ gateway_admin_user }} --password={{ gateway_admin_password }}
+  register: automationgateway_updatesuperuser
+  changed_when: "'Password updated' in automationgateway_updatesuperuser.stdout"
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  failed_when:
+    - automationgateway_updatesuperuser is failed
+    - not "'User matching query does not exist' in automationgateway_updatesuperuser.stderr"
+  no_log: true
+  run_once: true
+  retries: 5
+  delay: 30
+  until: automationgateway_updatesuperuser is not failed
+
+- name: Initialize authenticators
+  ansible.builtin.command:
+    cmd: podman exec automation-gateway aap-gateway-manage authenticators --initialize
+  register: automationgateway_authenticators
+  changed_when: "'Created default local authenticator' in automationgateway_authenticators.stdout"
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  run_once: true
+  retries: 5
+  delay: 60
+  until: automationgateway_authenticators is not failed
