@@ -47,7 +47,6 @@
 .factory/
 .gbrain/
 .githooks/
-.github/
 .gradle/
 .gstack-worktrees/
 .gstack/
@@ -210,10 +209,8 @@ xcuserdata/
 ~/.ansible/
 
 # Glob/file-pattern ignores
-*
 *$py.class
 **.ipynb_checkpoints**
-**/*
 **/*.swp
 **/env.yml
 **/helm-charts/*.tgz
@@ -471,7 +468,6 @@ yarn-error.log*
 .env.test.local
 .envrc
 .gbrain-source
-.github/workflows
 .GitHubRepoManager.sh
 .gitignore
 .grit
@@ -1051,6 +1047,7 @@ zdnn.h
 !.project/spec.yaml
 !/.github/
 !/.github/workflows/*.yml
+/aap_workflow_project/inventory/controller.ini
 !/build_64.sh
 !/examples/*.bat
 !/examples/*/*.kts

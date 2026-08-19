@@ -1,0 +1,15 @@
+---
+- name: Validate AAP target host resource capacity
+  hosts: "{{ preflight_hosts | default('controller') }}"
+  gather_facts: false
+
+  tasks:
+    - name: Apply AAP resource preflight role
+      ansible.builtin.include_role:
+        name: aap27_preflight
+      vars:
+        aap27_preflight_min_cpu: "{{ min_cpu | default(4) }}"
+        aap27_preflight_min_ram_gb: "{{ min_ram_gb | default(16) }}"
+        aap27_preflight_min_disk_gb: "{{ min_disk_gb | default(40) }}"
+        aap27_preflight_disk_path: "{{ disk_path | default('/') }}"
+        aap27_preflight_fail_on_insufficient: "{{ fail_on_insufficient_resources | default(false) }}"

@@ -1,0 +1,208 @@
+---
+- name: Validate rootless Podman role inputs
+  ansible.builtin.assert:
+    that:
+      - aap27_rootless_podman_user | length > 0
+      - aap27_rootless_podman_user != 'root'
+      - aap27_rootless_podman_subid_start | int > 0
+      - aap27_rootless_podman_subid_range | int > 0
+    fail_msg: Rootless Podman requires a valid non-root user and positive sub-ID range.
+
+- name: Install rootless Podman packages
+  ansible.builtin.package:
+    name: "{{ aap27_rootless_podman_packages }}"
+    state: present
+  when: aap27_rootless_podman_install_packages | bool
+
+- name: Ensure rootless Podman user exists
+  ansible.builtin.user:
+    name: "{{ aap27_rootless_podman_user }}"
+    shell: /bin/bash
+    create_home: true
+    state: present
+  when: aap27_rootless_podman_create_user | bool
+
+- name: Ensure subordinate UID mapping exists
+  ansible.builtin.lineinfile:
+    path: /etc/subuid
+    regexp: "^{{ aap27_rootless_podman_user | regex_escape }}:"
+    line: >-
+      {{ aap27_rootless_podman_user }}:{{ aap27_rootless_podman_subid_start }}:{{ aap27_rootless_podman_subid_range }}
+    create: true
+    mode: "0644"
+
+- name: Ensure subordinate GID mapping exists
+  ansible.builtin.lineinfile:
+    path: /etc/subgid
+    regexp: "^{{ aap27_rootless_podman_user | regex_escape }}:"
+    line: >-
+      {{ aap27_rootless_podman_user }}:{{ aap27_rootless_podman_subid_start }}:{{ aap27_rootless_podman_subid_range }}
+    create: true
+    mode: "0644"
+
+- name: Configure maximum user namespaces
+  ansible.posix.sysctl:
+    name: user.max_user_namespaces
+    value: "{{ aap27_rootless_podman_max_user_namespaces }}"
+    state: present
+    reload: true
+  when: aap27_rootless_podman_configure_user_namespaces | bool
+
+- name: Resolve rootless Podman user UID
+  ansible.builtin.command:
+    argv:
+      - id
+      - -u
+      - "{{ aap27_rootless_podman_user }}"
+  register: aap27_rootless_podman_uid_result
+  changed_when: false
+
+- name: Resolve rootless Podman user home
+  ansible.builtin.command:
+    argv:
+      - getent
+      - passwd
+      - "{{ aap27_rootless_podman_user }}"
+  register: aap27_rootless_podman_passwd_result
+  changed_when: false
+
+- name: Set rootless Podman runtime facts
+  ansible.builtin.set_fact:
+    aap27_rootless_podman_uid: "{{ aap27_rootless_podman_uid_result.stdout }}"
+    aap27_rootless_podman_home: >-
+      {{ (aap27_rootless_podman_passwd_result.stdout.split(':')[5]) |
+         default('/home/' ~ aap27_rootless_podman_user, true) }}
+    aap27_rootless_podman_runtime_dir: "/run/user/{{ aap27_rootless_podman_uid_result.stdout }}"
+    aap27_rootless_podman_bus_address: "unix:path=/run/user/{{ aap27_rootless_podman_uid_result.stdout }}/bus"
+
+- name: Correct rootless Podman user home ownership
+  ansible.builtin.file:
+    path: "{{ aap27_rootless_podman_home }}"
+    owner: "{{ aap27_rootless_podman_user }}"
+    group: "{{ aap27_rootless_podman_user }}"
+    mode: "0700"
+    recurse: true
+  when: aap27_rootless_podman_correct_home_ownership | bool
+
+- name: Enable lingering for rootless Podman user
+  ansible.builtin.command:
+    argv:
+      - loginctl
+      - enable-linger
+      - "{{ aap27_rootless_podman_user }}"
+  changed_when: false
+
+- name: Ensure rootless Podman user manager is running
+  ansible.builtin.systemd_service:
+    name: "user@{{ aap27_rootless_podman_uid }}.service"
+    state: started
+
+- name: Wait for rootless Podman user DBus socket
+  ansible.builtin.wait_for:
+    path: "{{ aap27_rootless_podman_runtime_dir }}/bus"
+    state: started
+    timeout: "{{ aap27_rootless_podman_bus_timeout }}"
+  register: aap27_rootless_podman_bus_wait
+  failed_when:
+    - aap27_rootless_podman_fail_on_missing_bus | bool
+    - aap27_rootless_podman_bus_wait.failed | default(false)
+
+- name: Run rootless Podman storage migration
+  become: true
+  become_user: "{{ aap27_rootless_podman_user }}"
+  ansible.builtin.command: podman system migrate
+  environment: &rootless_podman_environment
+    HOME: "{{ aap27_rootless_podman_home }}"
+    XDG_RUNTIME_DIR: "{{ aap27_rootless_podman_runtime_dir }}"
+    DBUS_SESSION_BUS_ADDRESS: "{{ aap27_rootless_podman_bus_address }}"
+  changed_when: false
+  failed_when: false
+  when: aap27_rootless_podman_run_migrate | bool
+
+- name: Enable rootless Podman socket
+  become: true
+  become_user: "{{ aap27_rootless_podman_user }}"
+  ansible.builtin.systemd_service:
+    name: podman.socket
+    enabled: true
+    state: started
+    scope: user
+  environment: *rootless_podman_environment
+  when: aap27_rootless_podman_enable_socket | bool
+
+- name: Configure Docker-compatible rootless Podman socket
+  ansible.builtin.lineinfile:
+    path: "{{ aap27_rootless_podman_home }}/.bashrc"
+    regexp: '^export DOCKER_HOST="unix://\$XDG_RUNTIME_DIR/podman/podman.sock"$'
+    line: 'export DOCKER_HOST="unix://$XDG_RUNTIME_DIR/podman/podman.sock"'
+    create: true
+    owner: "{{ aap27_rootless_podman_user }}"
+    group: "{{ aap27_rootless_podman_user }}"
+    mode: "0644"
+  when: aap27_rootless_podman_configure_docker_host | bool
+
+- name: Enable rootful Podman socket
+  ansible.builtin.systemd_service:
+    name: podman.socket
+    enabled: true
+    state: started
+  when: aap27_rootless_podman_enable_rootful_socket | bool
+
+- name: Check current rootless registry login
+  become: true
+  become_user: "{{ aap27_rootless_podman_user }}"
+  ansible.builtin.command:
+    argv:
+      - podman
+      - login
+      - --get-login
+      - "{{ aap27_rootless_podman_registry_host }}"
+  environment: *rootless_podman_environment
+  register: aap27_rootless_podman_registry_current
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when:
+    - aap27_rootless_podman_registry_login | bool
+    - aap27_rootless_podman_registry_username | length > 0
+    - aap27_rootless_podman_registry_password | length > 0
+
+- name: Login rootless Podman to registry
+  become: true
+  become_user: "{{ aap27_rootless_podman_user }}"
+  ansible.builtin.command:
+    argv:
+      - podman
+      - login
+      - "{{ aap27_rootless_podman_registry_host }}"
+      - --username
+      - "{{ aap27_rootless_podman_registry_username }}"
+      - --password-stdin
+    stdin: "{{ aap27_rootless_podman_registry_password }}"
+  environment: *rootless_podman_environment
+  changed_when: true
+  no_log: true
+  when:
+    - aap27_rootless_podman_registry_login | bool
+    - aap27_rootless_podman_registry_username | length > 0
+    - aap27_rootless_podman_registry_password | length > 0
+    - (aap27_rootless_podman_registry_current.stdout | default('')) != aap27_rootless_podman_registry_username
+
+- name: Validate rootless Podman runtime
+  become: true
+  become_user: "{{ aap27_rootless_podman_user }}"
+  ansible.builtin.command: podman info
+  environment: *rootless_podman_environment
+  register: aap27_rootless_podman_info
+  changed_when: false
+  failed_when:
+    - aap27_rootless_podman_fail_on_validation | bool
+    - aap27_rootless_podman_info.rc != 0
+
+- name: Report rootless Podman configuration
+  ansible.builtin.debug:
+    msg:
+      - "Rootless Podman user: {{ aap27_rootless_podman_user }}"
+      - "Runtime directory: {{ aap27_rootless_podman_runtime_dir }}"
+      - "User socket enabled: {{ aap27_rootless_podman_enable_socket | bool }}"
+      - "Podman validation rc: {{ aap27_rootless_podman_info.rc }}"

@@ -1,0 +1,6 @@
+---
+- name: Load role-local vaulted installer defaults
+  ansible.builtin.include_vars:
+    file: "{{ aap27_defaults_env_file }}"
+  no_log: true
+  when: aap27_defaults_use_local_env | bool

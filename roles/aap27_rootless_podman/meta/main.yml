@@ -1,0 +1,13 @@
+---
+galaxy_info:
+  author: AAP Workflow
+  description: Configure a reliable rootless Podman user bus and runtime
+  min_ansible_version: "2.15"
+  license: MIT
+  platforms:
+    - name: EL
+      versions:
+        - "9"
+        - "10"
+
+dependencies: []

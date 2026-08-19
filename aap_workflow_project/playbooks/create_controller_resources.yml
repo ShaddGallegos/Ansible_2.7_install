@@ -50,7 +50,7 @@
           min: 10
           max: 2048
         - question_name: "Bundle File Name"
-          question_description: "File name under /home/admin/Downloads"
+          question_description: File name under the platform admin user's Downloads directory
           required: true
           type: text
           variable: bundle_file

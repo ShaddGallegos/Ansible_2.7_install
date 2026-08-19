@@ -5,6 +5,15 @@ This folder contains a menu-driven bash helper for preparing and installing Red 
 ## Files
 
 - `aap27_menu_installer.sh`: Interactive dynamic menu script.
+- `lib/state.sh`: Allowlisted, non-executable installer state persistence.
+- `lib/target.sh`: Local/remote target, SSH user, key, and inventory identity resolution.
+- `roles/aap27_rootless_podman/`: Canonical Ansible implementation of rootless
+  Podman user-bus, sub-ID, socket, migration, registry, and validation setup.
+- `roles/aap27_preflight/`: Idempotent CPU, RAM, and disk-capacity validation.
+- `aap_workflow_project/playbooks/fix_podman_user_bus.yml`: Standalone playbook
+  entry point for the rootless Podman role.
+- `aap_workflow_project/playbooks/preflight_resources.yml`: Standalone resource
+  preflight entry point.
 - `CHECKLIST.md`: Linked installation checklist and prerequisites.
 
 ## What This Tool Does
@@ -43,13 +52,20 @@ This path is intended for running installation as AAP Job Templates and Workflow
 - `aap_workflow_project/playbooks/host_identity.yml`
 - `aap_workflow_project/playbooks/download_bundle.yml`
 - `aap_workflow_project/playbooks/install_aap.yml`
+- `roles/aap27_menu_installer/` - role-based equivalent of the shell menu steps
+  (prework, host_identity, download_bundle, install), including the
+  `ansible.containerized_installer` collection patches under its `files/`
+  directory. Discovered automatically via `roles_path` in
+  `aap_workflow_project/ansible.cfg`.
+- `roles/aap27_defaults/` - shared/vaulted default variables
+  (`vars/env.yml`, ansible-vault encrypted).
 
 ### Workflow Setup
 
 1. Install required collection(s):
 
 ```bash
-cd /home/sgallego/GIT/Ansible_2.7_install/aap_workflow_project
+cd aap_workflow_project
 ansible-galaxy collection install -r requirements.yml
 ```
 
@@ -66,7 +82,7 @@ ansible-galaxy collection install -r requirements.yml
 ### Create Controller Resources
 
 ```bash
-cd /home/sgallego/GIT/Ansible_2.7_install/aap_workflow_project
+cd aap_workflow_project
 ansible-playbook -i inventory/controller.ini playbooks/create_controller_resources.yml
 ```
 
@@ -102,7 +118,7 @@ Before running install, confirm:
 ## Usage
 
 ```bash
-cd "/home/sgallego/GIT/Ansible_2.7_install"
+cd /path/to/Ansible_2.7_install
 chmod +x aap27_menu_installer.sh
 ./aap27_menu_installer.sh
 ```
@@ -115,9 +131,15 @@ Recommended launch user is `admin` (with passwordless sudo); the script now esca
 
 - Disabling firewall and setting SELinux permissive is included because requested, but this is generally not recommended for production hardening.
 - Installer execution (Step 10) requires a non-root SSH remote user; root is rejected by containerized installer preflight.
-- Secrets are stored in a local env file:
-  - `/home/admin/.aap27_install.env`
-  - permissions `0600`
+- Installer state is stored under the invoking user's home at
+  `~/.aap27_install.env` with mode `0600`. Values are encoded, not encrypted;
+  use the vaulted `aap27_defaults` role for encrypted at-rest secrets. The
+  one-time remote root password is removed from state after bootstrap.
+- Nested Ansible installer secrets are written to managed mode-`0600`
+  extra-vars files and are never passed through process arguments.
+- `aap_workflow_project/inventory/controller.ini` is generated locally and
+  ignored by Git. Start from `controller.ini.example` or run the install-scope
+  prompt to create it.
 - Review generated `inventory-growth` before installation.
 - This tool does not replace official Red Hat documentation.
 

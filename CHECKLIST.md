@@ -68,11 +68,11 @@ Use this path when launching installation through AAP Job Templates and Workflow
 
 ### Workflow Setup
 
-- [ ] Change directory to `/home/sgallego/GIT/Ansible_2.7_install/aap_workflow_project`
+- [ ] Change directory to the repository's `aap_workflow_project` directory
 - [ ] Install required collections:
 
 ```bash
-cd /home/sgallego/GIT/Ansible_2.7_install/aap_workflow_project
+cd aap_workflow_project
 ansible-galaxy collection install -r requirements.yml
 ```
 
@@ -82,7 +82,7 @@ ansible-galaxy collection install -r requirements.yml
 ### Create Controller Resources
 
 ```bash
-cd /home/sgallego/GIT/Ansible_2.7_install/aap_workflow_project
+cd aap_workflow_project
 ansible-playbook -i inventory/controller.ini playbooks/create_controller_resources.yml
 ```
 

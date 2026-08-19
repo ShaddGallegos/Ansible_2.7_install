@@ -1,0 +1,34 @@
+---
+- name: Restart controller rsyslog
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  ansible.builtin.systemd:
+    name: automation-controller-rsyslog.service
+    scope: user
+    state: restarted
+
+- name: Restart controller task
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  ansible.builtin.systemd:
+    name: automation-controller-task.service
+    scope: user
+    state: restarted
+
+- name: Restart controller web
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  ansible.builtin.systemd:
+    name: automation-controller-web.service
+    scope: user
+    state: restarted
+...

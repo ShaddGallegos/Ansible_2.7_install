@@ -1,0 +1,152 @@
+---
+- name: Resolve receptor service user home
+  become: true
+  become_user: '{{ ansible_user }}'
+  ansible.builtin.command:
+    cmd: getent passwd {{ ansible_user }}
+  register: _receptor_passwd_entry
+  changed_when: false
+
+- name: Set receptor service user home fact
+  become: true
+  become_user: '{{ ansible_user }}'
+  ansible.builtin.set_fact:
+    _receptor_user_home: '{{ (_receptor_passwd_entry.stdout.split(":"))[5] if _receptor_passwd_entry.stdout | length > 0 else "/home/" ~ ansible_user }}'
+
+- name: Set receptor bind root fact
+  become: true
+  become_user: '{{ ansible_user }}'
+  ansible.builtin.set_fact:
+    _receptor_bind_root: '{{ _receptor_user_home }}/aap'
+
+- name: Ensure receptor bind root exists
+  become: true
+  ansible.builtin.file:
+    path: '{{ _receptor_bind_root }}'
+    state: directory
+    owner: '{{ ansible_user }}'
+    group: '{{ ansible_user }}'
+    mode: '0755'
+
+- name: Mirror receptor source tree into user-accessible bind root
+  become: true
+  ansible.builtin.command:
+    cmd: |
+      bash -lc 'set -euo pipefail
+      source_root="/root/aap"
+      target_root="{{ _receptor_bind_root }}"
+      if [[ -d "${source_root}" ]]; then
+        mkdir -p "${target_root}"
+        if command -v rsync >/dev/null 2>&1; then
+          rsync -a --delete --chown={{ ansible_user }}:{{ ansible_user }} "${source_root}/" "${target_root}/"
+        else
+          rm -rf "${target_root}"
+          mkdir -p "${target_root}"
+          cp -a "${source_root}/." "${target_root}/"
+        fi
+      fi'
+  changed_when: false
+
+- name: Detect mirrored receptor bind tree ownership drift
+  become: true
+  ansible.builtin.command:
+    cmd: |
+      bash -lc 'set -euo pipefail
+      target_root="{{ _receptor_bind_root }}"
+      if [[ ! -d "${target_root}" ]]; then
+        echo absent
+        exit 0
+      fi
+      if find "${target_root}" \( ! -user {{ ansible_user }} -o ! -group {{ ansible_user }} \) -print -quit | grep -q .; then
+        echo drift
+      else
+        echo ok
+      fi'
+  register: _receptor_bind_owner_drift
+  changed_when: false
+
+- name: Ensure mirrored receptor bind tree ownership matches service user
+  become: true
+  ansible.builtin.command:
+    cmd: chown -R {{ ansible_user }}:{{ ansible_user }} {{ _receptor_bind_root }}
+  when: _receptor_bind_owner_drift.stdout == 'drift'
+  changed_when: _receptor_bind_owner_drift.stdout == 'drift'
+
+- name: Ensure receptor TLS mount tree is traversable and readable by container runtime users
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0755"
+  loop:
+    - '{{ _receptor_bind_root }}/receptor/etc'
+    - '{{ _receptor_bind_root }}/tls'
+    - '{{ _receptor_bind_root }}/tls/extracted'
+  become: true
+
+- name: Ensure receptor TLS files are readable by container runtime users
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0644"
+  loop:
+    - '{{ _receptor_bind_root }}/receptor/etc/receptor.crt'
+    - '{{ _receptor_bind_root }}/receptor/etc/receptor.key'
+    - '{{ _receptor_bind_root }}/receptor/etc/mesh-CA.crt'
+    - '{{ _receptor_bind_root }}/receptor/etc/signing_private.pem'
+    - '{{ _receptor_bind_root }}/receptor/etc/signing_public.pem'
+  become: true
+  failed_when: false
+
+- name: Set receptor container volume list for user bind root
+  become: true
+  become_user: '{{ ansible_user }}'
+  ansible.builtin.set_fact:
+    _receptor_volumes:
+      - '{{ _receptor_bind_root }}/tls/extracted:/etc/pki/ca-trust/extracted:z'
+      - '{{ _receptor_bind_root }}/containers/podman:/usr/bin/podman:ro,z'
+      - '{{ _receptor_bind_root }}/receptor/etc/receptor.conf:/etc/receptor/receptor.conf:ro,z'
+      - 'receptor_run:/run/receptor:U'
+      - 'receptor_runner:/home/runner:U'
+      - 'receptor_home:/root:U'
+      - 'receptor_data:/var/lib/receptor:U'
+      - '/run/user/{{ ansible_user_uid }}/podman/podman.sock:/run/user/{{ ansible_user_uid }}/podman/podman.sock:z'
+      - '{{ _receptor_bind_root }}/controller/data/job_execution:/root/aap/controller/data/job_execution:z'
+      - '{{ _receptor_bind_root }}/controller/data/projects:/root/aap/controller/data/projects:z'
+      - '{{ _receptor_bind_root }}/receptor/etc/receptor.crt:/etc/receptor/tls/receptor.crt:ro,z'
+      - '{{ _receptor_bind_root }}/receptor/etc/receptor.key:/etc/receptor/tls/receptor.key:ro,z'
+      - '{{ _receptor_bind_root }}/receptor/etc/mesh-CA.crt:/etc/receptor/tls/ca/mesh-CA.crt:ro,z'
+      - '{{ _receptor_bind_root }}/receptor/etc/signing_private.pem:/etc/receptor/signing_private.pem:ro,z'
+      - '{{ _receptor_bind_root }}/receptor/etc/signing_public.pem:/etc/receptor/signing_public.pem:ro,z'
+
+- name: Create the receptor container
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  containers.podman.podman_container:
+    name: receptor
+    image: '{{ _receptor_image }}'
+    image_volume: ignore
+    command: /usr/bin/receptor --config /etc/receptor/receptor.conf
+    generate_systemd:
+      container_prefix: ''
+      path: '{{ _receptor_user_home }}/.config/systemd/user'
+      separator: ''
+    log_driver: '{{ container_log_driver }}'
+    user: '{{ ansible_user_uid }}'
+    userns: host
+    network: host
+    volume: '{{ _receptor_volumes }}'
+    security_opt: ['label=disable']
+    env:
+      HOME: '{{ _receptor_user_home }}'
+      RECEPTORCTL_SOCKET: '/run/receptor/receptor.sock'
+      CONTAINER_HOST: 'unix://run/user/{{ ansible_user_uid }}/podman/podman.sock'
+    label: '{{ _autoupdate_label }}'
+    state: created
+    recreate: '{{ __containers_recreate | default(false) }}'
+  notify: Restart receptor

@@ -1,0 +1,47 @@
+---
+- name: Remediate rootless Podman OCI permission issues for AAP installer
+  hosts: controller
+  become: true
+  gather_facts: true
+  vars:
+    # Set this to the same non-root user that runs the installer/script.
+    deployment_user: admin
+    subuid_start: 100000
+    subuid_count: 65536
+
+  tasks:
+    - name: Repair rootless Podman runtime and user bus
+      ansible.builtin.include_role:
+        name: aap27_rootless_podman
+      vars:
+        aap27_rootless_podman_user: "{{ deployment_user }}"
+        aap27_rootless_podman_subid_start: "{{ subuid_start }}"
+        aap27_rootless_podman_subid_range: "{{ subuid_count }}"
+        aap27_rootless_podman_correct_home_ownership: true
+        aap27_rootless_podman_enable_rootful_socket: false
+        aap27_rootless_podman_fail_on_missing_bus: true
+        aap27_rootless_podman_fail_on_validation: false
+
+    - name: Remove failed automation gateway containers if present
+      ansible.builtin.command:
+        cmd: "podman rm -f {{ item }}"
+      become: true
+      become_user: "{{ deployment_user }}"
+      environment:
+        HOME: "{{ aap27_rootless_podman_home }}"
+        XDG_RUNTIME_DIR: "{{ aap27_rootless_podman_runtime_dir }}"
+        DBUS_SESSION_BUS_ADDRESS: "{{ aap27_rootless_podman_bus_address }}"
+      loop:
+        - automation-gateway
+        - automation-gateway-proxy
+        - automation-gateway-init
+      register: podman_rm
+      changed_when: "'Error:' not in (podman_rm.stderr | default(''))"
+      failed_when: false
+
+    - name: Show remediation summary
+      ansible.builtin.debug:
+        msg:
+          - "Rootless OCI remediation completed for user '{{ deployment_user }}'."
+          - "podman info rc={{ aap27_rootless_podman_info.rc | default('n/a') }}"
+          - "Re-run installer using the same '{{ deployment_user }}' account."

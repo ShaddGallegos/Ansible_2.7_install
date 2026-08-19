@@ -1,0 +1,29 @@
+---
+extends: default
+
+rules:
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: false
+  braces:
+    max-spaces-inside: 1
+  line-length:
+    max: 180
+    level: warning
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: true
+  truthy:
+    allowed-values:
+      - "true"
+      - "false"
+      - "on"
+      - "off"
+      - "yes"
+      - "no"
+
+ignore: |
+  aap_workflow_project/inventory/*.ini*
+  roles/aap27_defaults/vars/env.yml
+  roles/aap27_menu_installer/files/collection_patch_candidates/**
+  roles/aap27_menu_installer/files/collection_patches/**

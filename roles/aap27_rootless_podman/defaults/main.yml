@@ -1,0 +1,26 @@
+---
+aap27_rootless_podman_user: admin
+aap27_rootless_podman_create_user: true
+aap27_rootless_podman_install_packages: true
+aap27_rootless_podman_packages:
+  - podman
+  - shadow-utils
+
+aap27_rootless_podman_subid_start: 100000
+aap27_rootless_podman_subid_range: 65536
+aap27_rootless_podman_configure_user_namespaces: true
+aap27_rootless_podman_max_user_namespaces: 28633
+
+aap27_rootless_podman_correct_home_ownership: false
+aap27_rootless_podman_enable_socket: true
+aap27_rootless_podman_enable_rootful_socket: false
+aap27_rootless_podman_configure_docker_host: true
+aap27_rootless_podman_run_migrate: true
+aap27_rootless_podman_bus_timeout: 30
+aap27_rootless_podman_fail_on_missing_bus: true
+aap27_rootless_podman_fail_on_validation: false
+
+aap27_rootless_podman_registry_login: false
+aap27_rootless_podman_registry_host: registry.redhat.io
+aap27_rootless_podman_registry_username: ""
+aap27_rootless_podman_registry_password: ""

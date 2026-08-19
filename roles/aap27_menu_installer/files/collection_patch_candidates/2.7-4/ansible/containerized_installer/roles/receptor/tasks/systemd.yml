@@ -1,0 +1,361 @@
+---
+- name: Resolve receptor service user home
+  become: true
+  become_user: '{{ ansible_user }}'
+  ansible.builtin.command:
+    cmd: getent passwd {{ ansible_user }}
+  register: _receptor_passwd_entry
+  changed_when: false
+
+- name: Set receptor service user home fact
+  become: true
+  become_user: '{{ ansible_user }}'
+  ansible.builtin.set_fact:
+    _receptor_user_home: '{{ (_receptor_passwd_entry.stdout.split(":"))[5] if _receptor_passwd_entry.stdout | length > 0 else "/home/" ~ ansible_user }}'
+
+- name: Ensure user systemd directory exists for receptor unit
+  become: true
+  become_user: '{{ ansible_user }}'
+  ansible.builtin.file:
+    path: '{{ _receptor_user_home }}/.config/systemd/user'
+    state: directory
+    owner: '{{ ansible_user }}'
+    group: '{{ ansible_user }}'
+    mode: '0755'
+
+- name: Ensure receptor container definition is applied before service actions
+  ansible.builtin.include_tasks: containers.yml
+  when: (__systemd_state | default('started')) in ['started', 'restarted', 'reloaded']
+
+- name: Check whether receptor container exists
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  ansible.builtin.command:
+    cmd: podman inspect receptor
+  register: _receptor_container_exists
+  changed_when: false
+  failed_when: false
+
+- name: Recreate receptor container when missing before service start
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  containers.podman.podman_container:
+    name: receptor
+    image: '{{ _receptor_image }}'
+    image_volume: ignore
+    command: /usr/bin/receptor --config /etc/receptor/receptor.conf
+    generate_systemd:
+      container_prefix: ''
+      path: '{{ _receptor_user_home }}/.config/systemd/user'
+      separator: ''
+    log_driver: '{{ container_log_driver }}'
+    user: '{{ ansible_user_uid }}'
+    userns: host
+    network: host
+    volume: '{{ _receptor_volumes }}'
+    security_opt: ['label=disable']
+    env:
+      HOME: '{{ _receptor_user_home }}'
+      RECEPTORCTL_SOCKET: '/run/receptor/receptor.sock'
+      CONTAINER_HOST: 'unix://run/user/{{ ansible_user_uid }}/podman/podman.sock'
+    label: '{{ _autoupdate_label }}'
+    state: created
+    recreate: '{{ __containers_recreate | default(false) }}'
+  when:
+    - (__systemd_state | default('started')) in ['started', 'restarted', 'reloaded']
+    - _receptor_container_exists.rc != 0
+
+- name: Check whether receptor user systemd unit exists
+  become: true
+  become_user: '{{ ansible_user }}'
+  ansible.builtin.stat:
+    path: '{{ _receptor_user_home }}/.config/systemd/user/receptor.service'
+  register: _receptor_user_unit
+
+- name: Check whether container-prefixed receptor user systemd unit exists
+  become: true
+  become_user: '{{ ansible_user }}'
+  ansible.builtin.stat:
+    path: '{{ _receptor_user_home }}/.config/systemd/user/container-receptor.service'
+  register: _receptor_container_user_unit
+
+- name: Regenerate receptor user systemd unit from current container definition
+  become: true
+  become_user: '{{ ansible_user }}'
+  environment:
+    XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+  ansible.builtin.command:
+    cmd: podman generate systemd --new --name receptor --files
+    chdir: '{{ _receptor_user_home }}/.config/systemd/user'
+
+- name: Refresh receptor user unit stat after generation
+  become: true
+  become_user: '{{ ansible_user }}'
+  ansible.builtin.stat:
+    path: '{{ _receptor_user_home }}/.config/systemd/user/receptor.service'
+  register: _receptor_user_unit_after
+
+- name: Refresh container-prefixed receptor user unit stat after generation
+  become: true
+  become_user: '{{ ansible_user }}'
+  ansible.builtin.stat:
+    path: '{{ _receptor_user_home }}/.config/systemd/user/container-receptor.service'
+  register: _receptor_container_user_unit_after
+
+- name: Select receptor systemd unit name
+  become: true
+  become_user: '{{ ansible_user }}'
+  ansible.builtin.set_fact:
+    _receptor_systemd_unit: '{{ "container-receptor.service" if _receptor_container_user_unit_after.stat.exists else "receptor.service" }}'
+
+- name: Fail when receptor user systemd unit was not generated
+  become: true
+  become_user: '{{ ansible_user }}'
+  ansible.builtin.fail:
+    msg: >-
+      No receptor user systemd unit found after generation at
+      {{ _receptor_user_home }}/.config/systemd/user.
+      Expected receptor.service or container-receptor.service.
+  when:
+    - not _receptor_container_user_unit_after.stat.exists
+    - not _receptor_user_unit_after.stat.exists
+
+- name: Ensure linger is enabled for receptor service user
+  become: true
+  ansible.builtin.command:
+    cmd: loginctl enable-linger {{ ansible_user }}
+  changed_when: false
+
+- name: Ensure systemd user manager is started
+  become: true
+  ansible.builtin.command:
+    cmd: systemctl start user@{{ ansible_user_uid }}.service
+  changed_when: false
+
+- name: Manage receptor container via systemd
+  become: true
+  ansible.builtin.command:
+    cmd: systemctl --machine={{ ansible_user }}@ --user daemon-reload
+
+- name: Enable receptor user service
+  become: true
+  ansible.builtin.command:
+    cmd: systemctl --machine={{ ansible_user }}@ --user enable {{ _receptor_systemd_unit }}
+  when: __systemd_enabled | default(true)
+
+- name: Disable receptor user service
+  become: true
+  ansible.builtin.command:
+    cmd: systemctl --machine={{ ansible_user }}@ --user disable {{ _receptor_systemd_unit }}
+  when: not (__systemd_enabled | default(true))
+
+- name: Start receptor user service
+  when: (__systemd_state | default('started')) == 'started'
+  block:
+    - name: Force receptor container recreate before starting user service
+      ansible.builtin.set_fact:
+        __containers_recreate: true
+
+    - name: Re-apply receptor container definition immediately before start
+      ansible.builtin.include_tasks: containers.yml
+
+    - name: Reload receptor user systemd manager before primary start
+      become: true
+      ansible.builtin.command:
+        cmd: systemctl --machine={{ ansible_user }}@ --user daemon-reload
+
+    - name: Reset failed state before starting receptor user service
+      become: true
+      ansible.builtin.command:
+        cmd: systemctl --machine={{ ansible_user }}@ --user reset-failed {{ _receptor_systemd_unit }}
+      changed_when: false
+      failed_when: false
+
+    - name: Start receptor user service primary attempt
+      become: true
+      ansible.builtin.command:
+        cmd: systemctl --machine={{ ansible_user }}@ --user start {{ _receptor_systemd_unit }}
+
+  rescue:
+    - name: Capture receptor user service status after failed start
+      become: true
+      ansible.builtin.command:
+        cmd: systemctl --machine={{ ansible_user }}@ --user status {{ _receptor_systemd_unit }} --no-pager
+      register: _receptor_service_status_after_failed_start
+      changed_when: false
+      failed_when: false
+
+    - name: Capture receptor user journal after failed start
+      become: true
+      ansible.builtin.command:
+        cmd: runuser -u {{ ansible_user }} -- journalctl --user -u {{ _receptor_systemd_unit }} -n 200 --no-pager
+      register: _receptor_service_journal_after_failed_start
+      changed_when: false
+      failed_when: false
+
+    - name: Capture recent receptor container logs after failed start
+      become: true
+      become_user: '{{ ansible_user }}'
+      environment:
+        XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+        DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+      ansible.builtin.command:
+        cmd: podman logs --tail 120 receptor
+      register: _receptor_container_logs_after_failed_start
+      changed_when: false
+      failed_when: false
+
+    - name: Force receptor container recreate after failed start
+      ansible.builtin.set_fact:
+        __containers_recreate: true
+
+    - name: Re-apply receptor container definition after failed start
+      ansible.builtin.include_tasks: containers.yml
+
+    - name: Reload receptor user systemd manager after failed start
+      become: true
+      ansible.builtin.command:
+        cmd: systemctl --machine={{ ansible_user }}@ --user daemon-reload
+
+    - name: Reset failed state before retrying receptor user service start
+      become: true
+      ansible.builtin.command:
+        cmd: systemctl --machine={{ ansible_user }}@ --user reset-failed {{ _receptor_systemd_unit }}
+      changed_when: false
+      failed_when: false
+
+    - name: Retry starting receptor user service after container recreate
+      become: true
+      ansible.builtin.command:
+        cmd: systemctl --machine={{ ansible_user }}@ --user start {{ _receptor_systemd_unit }}
+      register: _receptor_retry_start_result
+      failed_when: false
+
+    - name: Fallback to direct podman start when user service retry fails
+      become: true
+      become_user: '{{ ansible_user }}'
+      environment:
+        XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+        DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+      ansible.builtin.command:
+        cmd: podman start receptor
+      register: _receptor_direct_start_result
+      failed_when: false
+      when: _receptor_retry_start_result.rc != 0
+
+    - name: Check receptor container state after user service retry
+      become: true
+      become_user: '{{ ansible_user }}'
+      environment:
+        XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+        DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+      ansible.builtin.command:
+        cmd: podman inspect receptor --format {{"{{"}}.State.Status{{"}}"}}
+      register: _receptor_state_after_retry
+      changed_when: false
+      failed_when: false
+      when: _receptor_retry_start_result.rc != 0
+
+    - name: Capture receptor container state error after user service retry
+      become: true
+      become_user: '{{ ansible_user }}'
+      environment:
+        XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+        DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+      ansible.builtin.command:
+        cmd: podman inspect receptor --format {{"{{"}}.State.Error{{"}}"}}
+      register: _receptor_state_error_after_retry
+      changed_when: false
+      failed_when: false
+      when: _receptor_retry_start_result.rc != 0
+
+    - name: Capture receptor container exit code after user service retry
+      become: true
+      become_user: '{{ ansible_user }}'
+      environment:
+        XDG_RUNTIME_DIR: '/run/user/{{ ansible_user_uid }}'
+        DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/{{ ansible_user_uid }}/bus'
+      ansible.builtin.command:
+        cmd: podman inspect receptor --format {{"{{"}}.State.ExitCode{{"}}"}}
+      register: _receptor_state_exit_code_after_retry
+      changed_when: false
+      failed_when: false
+      when: _receptor_retry_start_result.rc != 0
+
+    - name: Capture receptor user service status after retry failure
+      become: true
+      ansible.builtin.command:
+        cmd: systemctl --machine={{ ansible_user }}@ --user status {{ _receptor_systemd_unit }} --no-pager
+      register: _receptor_service_status_after_retry
+      changed_when: false
+      failed_when: false
+      when: _receptor_retry_start_result.rc != 0
+
+    - name: Capture receptor user journal after retry failure
+      become: true
+      ansible.builtin.command:
+        cmd: runuser -u {{ ansible_user }} -- journalctl --user -u {{ _receptor_systemd_unit }} -n 200 --no-pager
+      register: _receptor_service_journal_after_retry
+      changed_when: false
+      failed_when: false
+      when: _receptor_retry_start_result.rc != 0
+
+    - name: Fail when receptor is still not running after retry and fallback
+      ansible.builtin.fail:
+        msg: >-
+          Receptor failed to start via systemd and direct podman fallback.
+          first_status={{ _receptor_service_status_after_failed_start.stdout | default(_receptor_service_status_after_failed_start.stderr | default('')) }}
+          first_journal={{ _receptor_service_journal_after_failed_start.stdout | default(_receptor_service_journal_after_failed_start.stderr | default('')) }}
+          first_logs={{ _receptor_container_logs_after_failed_start.stdout | default(_receptor_container_logs_after_failed_start.stderr | default('')) }}
+          retry_status={{ _receptor_service_status_after_retry.stdout | default(_receptor_service_status_after_retry.stderr | default('')) }}
+          retry_journal={{ _receptor_service_journal_after_retry.stdout | default(_receptor_service_journal_after_retry.stderr | default('')) }}
+          retry_systemd_rc={{ _receptor_retry_start_result.rc | default('n/a') }}
+          retry_podman_start_rc={{ _receptor_direct_start_result.rc | default('n/a') }}
+          container_state={{ _receptor_state_after_retry.stdout | default('missing') }}
+          container_state_error={{ _receptor_state_error_after_retry.stdout | default('') }}
+          container_exit_code={{ _receptor_state_exit_code_after_retry.stdout | default('') }}
+      when:
+        - _receptor_retry_start_result.rc != 0
+        - (_receptor_state_after_retry.stdout | default('')) != 'running'
+
+    - name: Warn when receptor recovered via direct podman start fallback
+      ansible.builtin.debug:
+        msg:
+          - 'Receptor systemd retry failed, but direct podman start recovered the container.'
+          - 'retry_systemd_rc={{ _receptor_retry_start_result.rc | default("n/a") }} fallback_rc={{ _receptor_direct_start_result.rc | default("n/a") }} state={{ _receptor_state_after_retry.stdout | default("missing") }}'
+      when:
+        - _receptor_retry_start_result.rc != 0
+        - (_receptor_state_after_retry.stdout | default('')) == 'running'
+
+    - name: Show receptor diagnostics from first failed start
+      ansible.builtin.debug:
+        msg:
+          - 'Initial receptor service start failed and was retried after container recreate.'
+          - 'systemctl status excerpt: {{ _receptor_service_status_after_failed_start.stdout | default(_receptor_service_status_after_failed_start.stderr | default("")) }}'
+          - 'journalctl excerpt: {{ _receptor_service_journal_after_failed_start.stdout | default(_receptor_service_journal_after_failed_start.stderr | default("")) }}'
+          - 'podman logs excerpt: {{ _receptor_container_logs_after_failed_start.stdout | default(_receptor_container_logs_after_failed_start.stderr | default("")) }}'
+
+- name: Stop receptor user service
+  become: true
+  ansible.builtin.command:
+    cmd: systemctl --machine={{ ansible_user }}@ --user stop {{ _receptor_systemd_unit }}
+  when: (__systemd_state | default('started')) == 'stopped'
+
+- name: Restart receptor user service
+  become: true
+  ansible.builtin.command:
+    cmd: systemctl --machine={{ ansible_user }}@ --user restart {{ _receptor_systemd_unit }}
+  when: (__systemd_state | default('started')) == 'restarted'
+
+- name: Reload receptor user service
+  become: true
+  ansible.builtin.command:
+    cmd: systemctl --machine={{ ansible_user }}@ --user reload {{ _receptor_systemd_unit }}
+  when: (__systemd_state | default('started')) == 'reloaded'

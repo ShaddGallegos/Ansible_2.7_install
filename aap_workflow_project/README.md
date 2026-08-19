@@ -24,7 +24,7 @@ This project creates AAP controller resources so installation can be launched as
 - `playbooks/download_bundle.yml`
 - `playbooks/install_aap.yml`
 - `group_vars/all.yml`
-- `inventory/controller.ini`
+- `inventory/controller.ini.example`
 - `CHECKLIST.md`
 
 ## Prerequisites
@@ -35,9 +35,12 @@ This project creates AAP controller resources so installation can be launched as
 ansible-galaxy collection install -r requirements.yml
 ```
 
-2. Update `group_vars/all.yml` with controller URL and auth.
-3. Set `machine_credential_username` to a non-root SSH user (for example `admin`).
-4. Ensure controller token/user can manage resources.
+2. Copy `inventory/controller.ini.example` to `inventory/controller.ini`, or
+  run the menu install-scope prompt to generate it. The operational inventory
+  is intentionally ignored by Git.
+3. Update `group_vars/all.yml` with controller URL and auth.
+4. Set `machine_credential_username` to a non-root SSH user (for example `admin`).
+5. Ensure controller token/user can manage resources.
 
 ## Run
 

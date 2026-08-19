@@ -6,7 +6,9 @@
 
   vars:
     effective_target_fqdn: "{{ target_fqdn | default(default_fqdn) }}"
-    admin_password: "{{ admin_password | default('') }}"
+    platform_admin_user: "{{ admin_user | default('admin') }}"
+    platform_admin_home: "{{ admin_home | default('/home/' ~ platform_admin_user) }}"
+    effective_admin_password: "{{ admin_password | default('') }}"
 
   tasks:
     - name: Set hostname to target FQDN
@@ -26,37 +28,38 @@
 
     - name: Ensure admin user exists
       ansible.builtin.user:
-        name: admin
+        name: "{{ platform_admin_user }}"
         shell: /bin/bash
         create_home: true
         state: present
 
     - name: Set admin password when provided
       ansible.builtin.user:
-        name: admin
-        password: "{{ admin_password | password_hash('sha512') }}"
-      when: admin_password | length > 0
+        name: "{{ platform_admin_user }}"
+        password: "{{ effective_admin_password | password_hash('sha512') }}"
+      no_log: true
+      when: effective_admin_password | length > 0
 
     - name: Configure passwordless sudo for admin
       ansible.builtin.copy:
-        dest: /etc/sudoers.d/admin
-        content: "admin ALL=(ALL) NOPASSWD: ALL\n"
+        dest: "/etc/sudoers.d/{{ platform_admin_user }}"
+        content: "{{ platform_admin_user }} ALL=(ALL) NOPASSWD: ALL\n"
         owner: root
         group: root
         mode: "0440"
 
     - name: Ensure admin .ssh dir exists
       ansible.builtin.file:
-        path: /home/admin/.ssh
+        path: "{{ platform_admin_home }}/.ssh"
         state: directory
-        owner: admin
-        group: admin
+        owner: "{{ platform_admin_user }}"
+        group: "{{ platform_admin_user }}"
         mode: "0700"
 
     - name: Generate admin ssh key if missing
       become: true
-      become_user: admin
+      become_user: "{{ platform_admin_user }}"
       community.crypto.openssh_keypair:
-        path: /home/admin/.ssh/id_ed25519
+        path: "{{ platform_admin_home }}/.ssh/id_ed25519"
         type: ed25519
         state: present

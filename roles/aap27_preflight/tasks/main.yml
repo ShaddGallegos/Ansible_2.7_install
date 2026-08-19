@@ -1,0 +1,78 @@
+---
+- name: Gather hardware and mount facts
+  ansible.builtin.setup:
+    gather_subset:
+      - hardware
+
+- name: Resolve requested disk mount
+  ansible.builtin.set_fact:
+    aap27_preflight_mount: >-
+      {{ (ansible_facts.mounts |
+          selectattr('mount', 'equalto', aap27_preflight_disk_path) |
+          list |
+          first) | default({}) }}
+
+- name: Validate preflight inputs and facts
+  ansible.builtin.assert:
+    that:
+      - aap27_preflight_min_cpu | int > 0
+      - aap27_preflight_min_ram_gb | int > 0
+      - aap27_preflight_min_disk_gb | int > 0
+      - aap27_preflight_mount | length > 0
+    fail_msg: >-
+      Preflight thresholds must be positive and disk path
+      '{{ aap27_preflight_disk_path }}' must be a mounted filesystem.
+
+- name: Calculate resource capacity
+  ansible.builtin.set_fact:
+    aap27_preflight_cpu: "{{ ansible_facts.processor_vcpus | default(ansible_facts.processor_count, true) | int }}"
+    aap27_preflight_ram_gb: "{{ (ansible_facts.memtotal_mb | int / 1024) | int }}"
+    aap27_preflight_disk_available_gb: "{{ (aap27_preflight_mount.size_available | int / 1073741824) | int }}"
+
+- name: Report resource capacity
+  ansible.builtin.debug:
+    msg:
+      - "CPU: {{ aap27_preflight_cpu }} vCPU(s), minimum {{ aap27_preflight_min_cpu }}"
+      - "RAM: {{ aap27_preflight_ram_gb }} GB, minimum {{ aap27_preflight_min_ram_gb }} GB"
+      - >-
+        Disk: {{ aap27_preflight_disk_available_gb }} GB available on
+        {{ aap27_preflight_disk_path }}, minimum {{ aap27_preflight_min_disk_gb }} GB
+
+- name: Enforce minimum resource capacity
+  ansible.builtin.assert:
+    that:
+      - aap27_preflight_cpu | int >= aap27_preflight_min_cpu | int
+      - aap27_preflight_ram_gb | int >= aap27_preflight_min_ram_gb | int
+      - aap27_preflight_disk_available_gb | int >= aap27_preflight_min_disk_gb | int
+    fail_msg: >-
+      Host does not meet minimum AAP resource requirements. Review the resource
+      capacity report and adjust aap27_preflight_min_* variables if appropriate.
+  when: aap27_preflight_fail_on_insufficient | bool
+
+- name: Warn when CPU capacity is below minimum
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: {{ aap27_preflight_cpu }} vCPU(s) is below the configured
+      minimum of {{ aap27_preflight_min_cpu }}.
+  when:
+    - not aap27_preflight_fail_on_insufficient | bool
+    - aap27_preflight_cpu | int < aap27_preflight_min_cpu | int
+
+- name: Warn when RAM capacity is below minimum
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: {{ aap27_preflight_ram_gb }} GB RAM is below the configured
+      minimum of {{ aap27_preflight_min_ram_gb }} GB.
+  when:
+    - not aap27_preflight_fail_on_insufficient | bool
+    - aap27_preflight_ram_gb | int < aap27_preflight_min_ram_gb | int
+
+- name: Warn when disk capacity is below minimum
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: {{ aap27_preflight_disk_available_gb }} GB available on
+      {{ aap27_preflight_disk_path }} is below the configured minimum of
+      {{ aap27_preflight_min_disk_gb }} GB.
+  when:
+    - not aap27_preflight_fail_on_insufficient | bool
+    - aap27_preflight_disk_available_gb | int < aap27_preflight_min_disk_gb | int

@@ -1,0 +1,4 @@
+---
+aap27_defaults_use_local_env: false
+aap27_defaults_env_file: env.yml
+aap27_defaults_precedence: "noninteractive"

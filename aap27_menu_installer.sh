@@ -7,18 +7,27 @@ if [ -z "${BASH_VERSION:-}" ]; then
   exit 1
 fi
 
-set -euo pipefail
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  set -euo pipefail
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 BUNDLE_FILE="ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64.tar.gz"
 BUNDLE_URL_DEFAULT="https://access.cdn.redhat.com/content/origin/files/sha256/5c/5c0e1834c1ae609ce840865b5aa279b5c5bde9118856b326f77cc5c8bf92d9af/ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64.tar.gz"
 BUNDLE_DIR_NAME="ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64"
-ADMIN_HOME="/home/admin"
-DOWNLOAD_DIR="${ADMIN_HOME}/Downloads"
-ENV_FILE="${ADMIN_HOME}/.aap27_install.env"
+ADMIN_USER="${ADMIN_USER:-admin}"
+ADMIN_HOME="${ADMIN_HOME:-/home/${ADMIN_USER}}"
+# Local installer state (Downloads/env file) lives under the invoking user's
+# own home. The admin account/home is only guaranteed to exist locally when
+# INSTALL_SCOPE=local; for INSTALL_SCOPE=remote, admin is created on the
+# remote target host instead (see provision_remote_admin_via_ssh).
+CONTROLLER_STATE_HOME="${HOME:-$(getent passwd "$(id -un)" | cut -d: -f6)}"
+CONTROLLER_STATE_HOME="${CONTROLLER_STATE_HOME:-/tmp}"
+DOWNLOAD_DIR="${CONTROLLER_STATE_HOME}/Downloads"
+ENV_FILE="${CONTROLLER_STATE_HOME}/.aap27_install.env"
 INVENTORY_FILE="${DOWNLOAD_DIR}/${BUNDLE_DIR_NAME}/inventory-growth"
-DEFAULT_RHSM_USERNAME="shadd@redhat.com"
+DEFAULT_RHSM_USERNAME=""
 
 # Colors
 RED='\033[0;31m'
@@ -32,10 +41,70 @@ warn() { echo -e "${YEL}[WARN]${NC} $*"; }
 err() { echo -e "${RED}[ERR ]${NC} $*"; }
 ok() { echo -e "${GRN}[ OK ]${NC} $*"; }
 
+# Set true via --non-interactive/-y CLI flag, or auto-detected when stdin is
+# not a tty (e.g. piped/cron/CI). No prompt in this script should block when true.
+NONINTERACTIVE="${NONINTERACTIVE:-false}"
+
+# Reads a value into $1 interactively, or uses default $3 (or existing env
+# value of $1) without blocking when NONINTERACTIVE=true. Errors out if a
+# required (no-default) value is missing in non-interactive mode.
+ask_value() {
+  local var_name="$1"
+  local prompt="$2"
+  local default_val="${3:-}"
+  local -n target_ref="${var_name}"
+  local current="${target_ref:-}"
+
+  if [[ "${NONINTERACTIVE}" == "true" ]]; then
+    if [[ -n "${current}" ]]; then
+      return 0
+    fi
+    if [[ -n "${default_val}" ]]; then
+      printf -v "${var_name}" '%s' "${default_val}"
+      return 0
+    fi
+    err "Non-interactive mode: '${prompt}' has no value and no default. Set ${var_name} in ${ENV_FILE} and re-run."
+    return 1
+  fi
+
+  read -r -p "${prompt}: " target_ref
+  if [[ -z "${target_ref:-}" && -n "${default_val}" ]]; then
+    target_ref="${default_val}"
+  fi
+}
+
+# Yes/no confirmation. Returns 0 for yes, 1 for no. default_answer is "y" or "n".
+ask_yn() {
+  local prompt="$1"
+  local default_answer="${2:-n}"
+  local reply
+
+  if [[ "${NONINTERACTIVE}" == "true" ]]; then
+    log "Non-interactive: assuming '${default_answer}' for: ${prompt}"
+    [[ "${default_answer}" =~ ^[Yy]$ ]]
+    return $?
+  fi
+
+  read -r -p "${prompt} " reply
+  reply="${reply:-${default_answer}}"
+  [[ "${reply}" =~ ^[Yy]$ ]]
+}
+
 require_root() {
   if [[ ${EUID} -ne 0 ]] && ! command -v sudo >/dev/null 2>&1; then
     err "Run as root, or install sudo for non-root execution."
     exit 1
+  fi
+}
+
+validate_admin_identity() {
+  if [[ ! "${ADMIN_USER}" =~ ^[a-z_][a-z0-9_-]*\$?$ ]]; then
+    err "ADMIN_USER='${ADMIN_USER}' is not a valid Linux user name."
+    return 1
+  fi
+  if [[ "${ADMIN_HOME}" != /* ]]; then
+    err "ADMIN_HOME must be an absolute path: ${ADMIN_HOME}"
+    return 1
   fi
 }
 
@@ -48,81 +117,22 @@ run_privileged() {
 }
 
 enforce_admin_home_ownership() {
-  if id admin >/dev/null 2>&1; then
-    run_privileged chown -R admin:admin /home/admin
+  if id "${ADMIN_USER}" >/dev/null 2>&1; then
+    run_privileged chown -R "${ADMIN_USER}:${ADMIN_USER}" "${ADMIN_HOME}"
   else
-    warn "admin user does not exist yet; skipping /home/admin ownership enforcement."
+    warn "${ADMIN_USER} user does not exist yet; skipping ${ADMIN_HOME} ownership enforcement."
   fi
 }
 
 pause_enter() {
+  if [[ "${NONINTERACTIVE}" == "true" ]]; then
+    return 0
+  fi
   read -r -p "Press ENTER to continue..." _unused
 }
 
-initialize_env_file() {
-  local env_dir candidate
-  local -a candidates
-
-  env_dir="$(dirname "${ENV_FILE}")"
-
-  if [[ ( -f "${ENV_FILE}" && -w "${ENV_FILE}" ) || ( -d "${env_dir}" && -w "${env_dir}" ) ]]; then
-    mkdir -p "${env_dir}"
-    touch "${ENV_FILE}"
-    chmod 600 "${ENV_FILE}"
-    return 0
-  fi
-
-  candidates=(
-    "${HOME:-}/.aap27_install.env"
-    "/tmp/.aap27_install_${USER:-$(id -u)}.env"
-    "${PWD}/.aap27_install.env"
-  )
-
-  for candidate in "${candidates[@]}"; do
-    [[ -n "${candidate}" ]] || continue
-    [[ "${candidate}" == "${ENV_FILE}" ]] && continue
-
-    env_dir="$(dirname "${candidate}")"
-    if [[ ! -d "${env_dir}" ]] && ! mkdir -p "${env_dir}" 2>/dev/null; then
-      continue
-    fi
-    if [[ ! -w "${env_dir}" ]]; then
-      continue
-    fi
-    if touch "${candidate}" 2>/dev/null; then
-      warn "Cannot write to ${ENV_FILE}; using ${candidate} for installer state."
-      ENV_FILE="${candidate}"
-      chmod 600 "${ENV_FILE}" || true
-      return 0
-    fi
-  done
-
-  err "Unable to initialize installer env file. Tried: ${ENV_FILE}, ${HOME:-<unset>}/.aap27_install.env, /tmp/.aap27_install_${USER:-uid}.env, ${PWD}/.aap27_install.env"
-  err "Fix directory permissions or export ENV_FILE to a writable path and re-run."
-  exit 1
-}
-
-load_env() {
-  if [[ -f "${ENV_FILE}" ]]; then
-    # shellcheck disable=SC1090
-    source "${ENV_FILE}"
-  fi
-}
-
-save_env_kv() {
-  local key="$1"
-  local val="$2"
-
-  mkdir -p "$(dirname "${ENV_FILE}")"
-  touch "${ENV_FILE}"
-  chmod 600 "${ENV_FILE}"
-
-  if grep -qE "^${key}=" "${ENV_FILE}"; then
-    sed -i "s|^${key}=.*|${key}='${val//\'/\'\"\'\"\'}'|" "${ENV_FILE}"
-  else
-    echo "${key}='${val//\'/\'\"\'\"\'}'" >> "${ENV_FILE}"
-  fi
-}
+# shellcheck source=lib/state.sh
+source "${SCRIPT_DIR}/lib/state.sh"
 
 normalize_ansible_verbosity() {
   local raw_value="${1:-}"
@@ -232,202 +242,94 @@ ensure_controller_key_authorized_for_user() {
 }
 
 ensure_admin_user_exists() {
-  if id admin >/dev/null 2>&1; then
+  if id "${ADMIN_USER}" >/dev/null 2>&1; then
     return 0
   fi
 
-  warn "admin user does not exist; creating it now."
+  warn "${ADMIN_USER} user does not exist; creating it now."
   if [[ -d "${ADMIN_HOME}" ]]; then
-    run_privileged useradd -M -d "${ADMIN_HOME}" -s /bin/bash admin
+    run_privileged useradd -M -d "${ADMIN_HOME}" -s /bin/bash "${ADMIN_USER}"
   else
-    run_privileged useradd -m -s /bin/bash admin
+    run_privileged useradd -m -d "${ADMIN_HOME}" -s /bin/bash "${ADMIN_USER}"
   fi
 
   if [[ -d "${ADMIN_HOME}" ]]; then
-    run_privileged chown admin:admin "${ADMIN_HOME}"
+    run_privileged chown "${ADMIN_USER}:${ADMIN_USER}" "${ADMIN_HOME}"
     run_privileged chmod 0750 "${ADMIN_HOME}" || true
   fi
 
-  ok "admin user created."
+  ok "${ADMIN_USER} user created."
 }
 
-ensure_subid_entry() {
-  local subid_file="$1"
-  local user_name="$2"
-  local start_id="$3"
-  local range_size="$4"
+run_rootless_podman_playbook() {
+  local target_user="${1:-${ADMIN_USER}}"
+  local registry_login="${2:-false}"
+  local registry_user="${3:-}"
+  local registry_pass="${4:-}"
+  local inventory_file playbook_file extra_vars_file
 
-  if [[ ! -f "${subid_file}" ]]; then
-    run_privileged touch "${subid_file}"
-  fi
+  inventory_file="${SCRIPT_DIR}/aap_workflow_project/inventory/controller.ini"
+  playbook_file="${SCRIPT_DIR}/aap_workflow_project/playbooks/fix_podman_user_bus.yml"
 
-  if run_privileged grep -qE "^${user_name}:" "${subid_file}"; then
-    return 0
-  fi
-
-  printf '%s:%s:%s\n' "${user_name}" "${start_id}" "${range_size}" | run_privileged tee -a "${subid_file}" >/dev/null
-}
-
-run_as_user() {
-  local user_name="$1"
-  shift
-
-  if [[ ${EUID} -eq 0 ]] && command -v runuser >/dev/null 2>&1; then
-    runuser -u "${user_name}" -- "$@"
-  elif command -v sudo >/dev/null 2>&1; then
-    sudo -u "${user_name}" "$@"
-  else
+  if ! command -v ansible-playbook >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    err "ansible-playbook and jq are required for rootless Podman configuration."
     return 1
   fi
-}
-
-ensure_user_home_ownership() {
-  local user_name="$1"
-  local user_home
-
-  if ! id "${user_name}" >/dev/null 2>&1; then
-    return 0
-  fi
-
-  user_home="$(getent passwd "${user_name}" | cut -d: -f6 || true)"
-  user_home="${user_home:-/home/${user_name}}"
-
-  if [[ -d "${user_home}" ]]; then
-    run_privileged chown -R "${user_name}:${user_name}" "${user_home}" 2>/dev/null || warn "Unable to fully correct ownership under ${user_home}."
-    run_privileged chmod 700 "${user_home}" 2>/dev/null || true
-  fi
-}
-
-ensure_user_dbus_session() {
-  local user_name="$1"
-  local user_uid bus_path i
-
-  if ! command -v loginctl >/dev/null 2>&1; then
-    warn "loginctl not found; cannot ensure lingering user DBus session for ${user_name}."
+  if [[ ! -f "${inventory_file}" || ! -f "${playbook_file}" ]]; then
+    err "Rootless Podman inventory or playbook is missing. Re-run install scope setup."
     return 1
   fi
 
-  user_uid="$(id -u "${user_name}" 2>/dev/null || true)"
-  if [[ -z "${user_uid}" ]]; then
-    warn "Unable to resolve UID for ${user_name}."
+  extra_vars_file="$(mktemp)"
+  chmod 600 "${extra_vars_file}"
+  jq -n \
+    --arg deployment_user "${target_user}" \
+    --arg registry_username "${registry_user}" \
+    --arg registry_password "${registry_pass}" \
+    --argjson registry_login "${registry_login}" \
+    '{
+      deployment_user: $deployment_user,
+      registry_login: $registry_login,
+      registry_username: $registry_username,
+      registry_password: $registry_password
+    }' > "${extra_vars_file}"
+
+  if ! (
+    cd "${SCRIPT_DIR}/aap_workflow_project"
+    ANSIBLE_CONFIG="${SCRIPT_DIR}/aap_workflow_project/ansible.cfg" \
+      ansible-playbook -i "${inventory_file}" "${playbook_file}" -e "@${extra_vars_file}"
+  ); then
+    rm -f "${extra_vars_file}"
+    err "Rootless Podman Ansible role failed for ${target_user}."
     return 1
   fi
 
-  run_privileged loginctl enable-linger "${user_name}" >/dev/null 2>&1 || warn "Unable to enable lingering for ${user_name}."
-  run_privileged systemctl start "user@${user_uid}.service" >/dev/null 2>&1 || warn "Unable to start user@${user_uid}.service"
-
-  bus_path="/run/user/${user_uid}/bus"
-  for i in {1..30}; do
-    if [[ -S "${bus_path}" ]]; then
-      return 0
-    fi
-    sleep 1
-  done
-
-  warn "Timed out waiting for user DBus socket at ${bus_path}."
-  return 1
-}
-
-setup_admin_rootless_podman() {
-  local target_user="${1:-admin}"
-  local target_uid xdg_runtime dbus_addr target_home
-
-  if ! id "${target_user}" >/dev/null 2>&1; then
-    warn "${target_user} user does not exist; skipping rootless podman setup."
-    return 0
-  fi
-
-  if ! command -v podman >/dev/null 2>&1; then
-    warn "podman is not installed; skipping rootless podman setup."
-    return 0
-  fi
-
-  ensure_subid_entry /etc/subuid "${target_user}" 100000 65536
-  ensure_subid_entry /etc/subgid "${target_user}" 100000 65536
-
-  target_uid="$(id -u "${target_user}" 2>/dev/null || echo 1000)"
-  target_home="$(get_user_home "${target_user}")"
-  xdg_runtime="/run/user/${target_uid}"
-  dbus_addr="unix:path=${xdg_runtime}/bus"
-
-  ensure_user_home_ownership "${target_user}"
-  ensure_user_dbus_session "${target_user}" || true
-
-  if run_as_user "${target_user}" env HOME="${target_home}" XDG_RUNTIME_DIR="${xdg_runtime}" DBUS_SESSION_BUS_ADDRESS="${dbus_addr}" podman system migrate >/dev/null 2>&1; then
-    :
-  else
-    warn "podman system migrate returned non-zero for ${target_user}."
-  fi
-
-  if run_as_user "${target_user}" env HOME="${target_home}" XDG_RUNTIME_DIR="${xdg_runtime}" DBUS_SESSION_BUS_ADDRESS="${dbus_addr}" systemctl --user enable --now podman.socket >/dev/null 2>&1; then
-    :
-  else
-    warn "Unable to enable podman.socket for ${target_user} user scope."
-  fi
-
-  ok "Rootless podman setup ensured for ${target_user}."
-}
-
-login_registry_as_admin() {
-  local login_user login_pass target_user target_uid xdg_runtime dbus_addr target_home current_login
-
-  target_user="${3:-admin}"
-
-  login_user="${1:-${RHSM_USERNAME:-${CDN_USERNAME:-${REDHAT_USERNAME:-${CONSOLE_USERNAME:-${DEFAULT_RHSM_USERNAME}}}}}}"
-  login_pass="${2:-${RHSM_PASSWORD:-${CDN_PASSWORD:-${REDHAT_PASSWORD:-${CONSOLE_PASSWORD:-}}}}}"
-
-  if [[ -z "${login_user}" || -z "${login_pass}" ]]; then
-    load_env
-    login_user="${login_user:-${RHSM_USERNAME:-${CDN_USERNAME:-${REDHAT_USERNAME:-${CONSOLE_USERNAME:-${DEFAULT_RHSM_USERNAME}}}}}}"
-    login_pass="${login_pass:-${RHSM_PASSWORD:-${CDN_PASSWORD:-${REDHAT_PASSWORD:-${CONSOLE_PASSWORD:-}}}}}"
-  fi
-
-  if ! id "${target_user}" >/dev/null 2>&1; then
-    warn "${target_user} user does not exist; skipping registry.redhat.io login."
-    return 0
-  fi
-
-  if ! command -v podman >/dev/null 2>&1; then
-    warn "podman is not installed; skipping registry.redhat.io login."
-    return 0
-  fi
-
-  if [[ -z "${login_user}" || -z "${login_pass}" ]]; then
-    warn "RHSM credentials are missing; skipping registry.redhat.io login."
-    return 0
-  fi
-
-  target_uid="$(id -u "${target_user}" 2>/dev/null || echo 1000)"
-  target_home="$(get_user_home "${target_user}")"
-  xdg_runtime="/run/user/${target_uid}"
-  dbus_addr="unix:path=${xdg_runtime}/bus"
-
-  ensure_user_home_ownership "${target_user}"
-  ensure_user_dbus_session "${target_user}" || true
-
-  current_login="$(run_as_user "${target_user}" env HOME="${target_home}" XDG_RUNTIME_DIR="${xdg_runtime}" DBUS_SESSION_BUS_ADDRESS="${dbus_addr}" podman login --get-login registry.redhat.io 2>/dev/null || true)"
-  if [[ "${current_login}" == "${login_user}" ]]; then
-    ok "registry.redhat.io login already valid for ${target_user} (${login_user})."
-    return 0
-  fi
-
-  if run_as_user "${target_user}" env HOME="${target_home}" XDG_RUNTIME_DIR="${xdg_runtime}" DBUS_SESSION_BUS_ADDRESS="${dbus_addr}" bash -lc "printf '%s\\n' \"${login_pass}\" | podman login registry.redhat.io --username \"${login_user}\" --password-stdin" >/dev/null 2>&1; then
-    ok "registry.redhat.io login succeeded for ${target_user} (rootless podman)."
-  else
-    warn "registry.redhat.io login failed for ${target_user} using ${login_user}. Verify RHSM credentials."
-  fi
+  rm -f "${extra_vars_file}"
+  ok "Rootless Podman Ansible role completed for ${target_user}."
 }
 
 patch_containerized_installer_user_bus_task() {
   local install_dir="$1"
-  local patch_root target_root relative_file source_file target_file runtime_tasks_file gateway_containers_file
+  local patch_root patch_manifest target_root relative_file source_file target_file runtime_tasks_file gateway_containers_file
 
-  patch_root="${SCRIPT_DIR}/collection_patches/ansible/containerized_installer"
+  patch_root="${SCRIPT_DIR}/roles/aap27_menu_installer/files/collection_patches/ansible/containerized_installer"
+  patch_manifest="${SCRIPT_DIR}/roles/aap27_menu_installer/files/collection_patches/manifest.conf"
   target_root="${install_dir}/collections/ansible_collections/ansible/containerized_installer"
 
   if [[ ! -d "${patch_root}" ]]; then
     warn "Collection patch root not found: ${patch_root}"
     return 0
+  fi
+
+  if [[ ! -f "${patch_manifest}" ]]; then
+    err "Collection patch manifest not found: ${patch_manifest}"
+    return 1
+  fi
+
+  if ! grep -qxF "supported_bundle_dir=${BUNDLE_DIR_NAME}" "${patch_manifest}"; then
+    err "Collection patches are not validated for bundle directory '${BUNDLE_DIR_NAME}'."
+    err "Supported bundle directories are listed in ${patch_manifest}."
+    return 1
   fi
 
   while IFS= read -r relative_file; do
@@ -526,10 +428,72 @@ preflight_dependency_checks() {
     fi
   fi
 
+  preflight_resource_checks
+
   if command -v podman >/dev/null 2>&1; then
     ok "Preflight complete: podman available."
   else
     warn "Preflight complete with warnings: podman still missing."
+  fi
+}
+
+preflight_resource_checks() {
+  local min_cpu min_ram_gb min_disk_gb
+  local cpu_count ram_kb ram_gb disk_avail_gb
+
+  load_env
+  min_cpu="${AAP_MIN_CPU:-4}"
+  min_ram_gb="${AAP_MIN_RAM_GB:-16}"
+  min_disk_gb="${AAP_MIN_DISK_GB:-40}"
+
+  resolve_target_context
+
+  if [[ "${TARGET_SCOPE}" == "remote" ]]; then
+    if [[ -z "${TARGET_HOST}" ]]; then
+      warn "INSTALL_SCOPE=remote but no controller host recorded; skipping remote CPU/RAM/storage checks."
+      return 0
+    fi
+    if [[ ! -f "${TARGET_SSH_KEY}" ]]; then
+      warn "No controller SSH key found (${TARGET_SSH_KEY}); run Step 6 (admin user) first. Skipping remote CPU/RAM/storage checks."
+      return 0
+    fi
+    if [[ "${TARGET_REACHABLE}" != "true" ]]; then
+      warn "Unable to reach ${TARGET_DESC} via SSH; skipping remote CPU/RAM/storage checks."
+      return 0
+    fi
+
+    cpu_count="$(remote_target_exec 'nproc' 2>/dev/null)"
+    ram_kb="$(remote_target_exec "awk '/MemTotal/{print \$2}' /proc/meminfo" 2>/dev/null)"
+    disk_avail_gb="$(remote_target_exec "df -BG / | awk 'NR==2{print \$4}' | tr -d 'G'" 2>/dev/null)"
+  else
+    cpu_count="$(nproc 2>/dev/null)"
+    ram_kb="$(awk '/MemTotal/{print $2}' /proc/meminfo 2>/dev/null)"
+    disk_avail_gb="$(df -BG / 2>/dev/null | awk 'NR==2{print $4}' | tr -d 'G')"
+  fi
+
+  [[ "${cpu_count}" =~ ^[0-9]+$ ]] || cpu_count=0
+  [[ "${ram_kb}" =~ ^[0-9]+$ ]] || ram_kb=0
+  [[ "${disk_avail_gb}" =~ ^[0-9]+$ ]] || disk_avail_gb=0
+  ram_gb=$(( ram_kb / 1024 / 1024 ))
+
+  log "Checking CPU/RAM/storage requirements on ${TARGET_DESC} (minimums: ${min_cpu} vCPU, ${min_ram_gb} GB RAM, ${min_disk_gb} GB free disk)."
+
+  if (( cpu_count >= min_cpu )); then
+    ok "CPU: ${cpu_count} vCPU(s) detected (minimum ${min_cpu})."
+  else
+    warn "CPU: ${cpu_count} vCPU(s) detected; below recommended minimum of ${min_cpu}."
+  fi
+
+  if (( ram_gb >= min_ram_gb )); then
+    ok "RAM: ${ram_gb} GB detected (minimum ${min_ram_gb} GB)."
+  else
+    warn "RAM: ${ram_gb} GB detected; below recommended minimum of ${min_ram_gb} GB."
+  fi
+
+  if (( disk_avail_gb >= min_disk_gb )); then
+    ok "Storage: ${disk_avail_gb} GB free on / (minimum ${min_disk_gb} GB)."
+  else
+    warn "Storage: ${disk_avail_gb} GB free on /; below recommended minimum of ${min_disk_gb} GB."
   fi
 }
 
@@ -569,9 +533,9 @@ EOF
 Step 5 - Admin User
 -------------------
 - Creates admin user if missing.
-- Configures passwordless sudo in /etc/sudoers.d/admin.
-- Generates /home/admin/.ssh/id_ed25519.
-- Attempts ssh-copy-id to admin@<hostname>.
+- Configures passwordless sudo for the configured platform admin user.
+- Generates an Ed25519 key under the configured platform admin home.
+- Attempts ssh-copy-id to the configured platform admin user.
 EOF
       ;;
     6)
@@ -604,14 +568,14 @@ https://access.redhat.com/management/api
 Remote Automation Hub token:
 https://console.redhat.com/ansible/automation-hub/token
 
-Captured values are stored in /home/admin/.aap27_install.env (mode 0600).
+Captured values are stored under the invoking user's home (mode 0600).
 EOF
       ;;
     7)
       cat <<'EOF'
 Step 7 - Download Bundle
 ------------------------
-- Downloads bundle to /home/admin/Downloads/
+- Downloads the bundle to the invoking user's Downloads directory.
 - Uses file name:
   ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64.tar.gz
 EOF
@@ -620,9 +584,9 @@ EOF
       cat <<'EOF'
 Step 8 - Extract Bundle
 -----------------------
-- Extracts tarball under /home/admin/Downloads.
+- Extracts the tarball under the invoking user's Downloads directory.
 - Expected extraction directory:
-  /home/admin/Downloads/ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64
+  <controller-state-home>/Downloads/<bundle-directory>
 EOF
       ;;
     9)
@@ -630,7 +594,7 @@ EOF
 Step 9 - Modify inventory-growth
 --------------------------------
 - Updates:
-  aap.example.com -> aap ansible_host={{ ansible_ip_address }} real_hostname={{ hostname }} ansible_user=admin ansible_ssh_private_key_file=/home/admin/.ssh/id_ed25519
+  aap.example.test -> ansible_host=<target-address> ansible_user=<platform-admin-user> ansible_ssh_private_key_file=<controller-key>
   password=<set your own> -> password={{ admin_password }}
   collections=false -> collections=true
 - Ensures [all:vars] includes admin/postgres/registry values.
@@ -650,7 +614,7 @@ Step 10 - Run Installer
     - ansible.containerized_installer.uninstall
 
 Execution directory:
-/home/admin/Downloads/ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64
+<controller-state-home>/Downloads/<bundle-directory>
 EOF
       ;;
     *)
@@ -667,13 +631,18 @@ read_secret_prompt() {
   local var_name="$1"
   local prompt="$2"
   local value
+
+  if [[ "${NONINTERACTIVE}" == "true" ]]; then
+    err "Non-interactive mode: '${prompt}' requires a secret with no safe default. Set ${var_name} in ${ENV_FILE} and re-run."
+    return 1
+  fi
+
   read -r -s -p "${prompt}: " value
   echo
   printf -v "${var_name}" '%s' "${value}"
 }
 
 prework_packages() {
-  local yn
   local packages=(
     sudo
     openssh-server
@@ -693,8 +662,7 @@ prework_packages() {
 
   log "Proposed prework packages:"
   printf ' - %s\n' "${packages[@]}"
-  read -r -p "Proceed with package installation? [Y/n]: " yn
-  if [[ "${yn:-Y}" =~ ^[Nn]$ ]]; then
+  if ! ask_yn "Proceed with package installation? [Y/n]:" "y"; then
     warn "Prework package installation skipped by operator."
     return 0
   fi
@@ -708,21 +676,17 @@ prework_packages() {
   fi
 
   run_privileged systemctl enable --now sshd || warn "Unable to enable/start sshd."
-  setup_admin_rootless_podman
   ok "Prework package installation step completed."
 }
 
 disable_firewall_selinux() {
-  local yn
-
   cat <<'EOF'
 Planned system changes:
 - Disable and stop firewalld service
 - Set SELinux runtime mode to permissive (setenforce 0)
 - Set SELINUX=permissive in /etc/selinux/config
 EOF
-  read -r -p "Apply these installation-mode security changes? [y/N]: " yn
-  if [[ ! "${yn:-N}" =~ ^[Yy]$ ]]; then
+  if ! ask_yn "Apply these installation-mode security changes? [y/N]:" "n"; then
     warn "Firewall/SELinux changes skipped by operator."
     return 0
   fi
@@ -747,8 +711,9 @@ EOF
 }
 
 set_fqdn_and_hosts() {
-  local current_fqdn current_domain target_fqdn target_domain system_ip yn
+  local current_fqdn current_domain target_fqdn target_domain system_ip hosts_alias
 
+  load_env
   current_fqdn="$(hostname -f 2>/dev/null || true)"
   current_domain="$(hostname -d 2>/dev/null || true)"
 
@@ -756,21 +721,22 @@ set_fqdn_and_hosts() {
   log "Detected domain: ${current_domain:-<not-set>}"
 
   if [[ -z "${current_fqdn}" || "${current_fqdn}" == "localhost" || "${current_fqdn}" == "localhost.localdomain" ]]; then
-    read -r -p "Enter target system FQDN (example: aap.example.com): " target_fqdn
+    target_fqdn=""
+    ask_value target_fqdn "Enter target system FQDN (example: aap.example.com)" || return 1
     if [[ -z "${target_fqdn}" ]]; then
       err "FQDN is required."
       return 1
     fi
   else
-    read -r -p "Use detected FQDN '${current_fqdn}'? [Y/n]: " yn
-    if [[ "${yn:-Y}" =~ ^[Nn]$ ]]; then
-      read -r -p "Enter target system FQDN: " target_fqdn
+    if ask_yn "Use detected FQDN '${current_fqdn}'? [Y/n]:" "y"; then
+      target_fqdn="${current_fqdn}"
+    else
+      target_fqdn=""
+      ask_value target_fqdn "Enter target system FQDN" || return 1
       if [[ -z "${target_fqdn}" ]]; then
         err "FQDN is required."
         return 1
       fi
-    else
-      target_fqdn="${current_fqdn}"
     fi
   fi
 
@@ -785,14 +751,20 @@ set_fqdn_and_hosts() {
     return 1
   fi
 
+  # This local host only owns the 'aap' alias when it IS the AAP node
+  # (INSTALL_SCOPE=local); for remote scope, 'aap' refers to the remote target.
+  hosts_alias=""
+  if [[ "${INSTALL_SCOPE:-}" != "remote" ]]; then
+    hosts_alias=" aap"
+  fi
+
   cat <<EOF
 Planned host identity changes:
 - hostnamectl set-hostname ${target_fqdn}
-- /etc/hosts entry ensured: ${system_ip} ${target_fqdn} aap
+- /etc/hosts entry ensured: ${system_ip} ${target_fqdn}${hosts_alias}
 - domain value to apply: ${target_domain:-<none>}
 EOF
-  read -r -p "Apply these host identity changes? [y/N]: " yn
-  if [[ ! "${yn:-N}" =~ ^[Yy]$ ]]; then
+  if ! ask_yn "Apply these host identity changes? [y/N]:" "n"; then
     warn "Host identity changes skipped by operator."
     return 0
   fi
@@ -815,10 +787,114 @@ EOF
   fi
 
   run_privileged sed -i "/[[:space:]]${target_fqdn//./\\.}[[:space:]]/d" /etc/hosts || true
+  # Always drop any stray 'aap' alias on this host; re-add it only if this
+  # host is actually the AAP node (local scope). Prevents a leftover local
+  # 'aap' alias from shadowing the real remote target's hostname.
   run_privileged sed -i "/[[:space:]]aap$/d" /etc/hosts || true
-  printf '%s %s aap\n' "${system_ip}" "${target_fqdn}" | run_privileged tee -a /etc/hosts >/dev/null
+  printf '%s %s%s\n' "${system_ip}" "${target_fqdn}" "${hosts_alias}" | run_privileged tee -a /etc/hosts >/dev/null
 
   ok "Host identity updated. FQDN=${target_fqdn}, domain=${target_domain:-<unset>}."
+}
+
+provision_remote_admin_via_ssh() {
+  local remote_host local_key local_pub
+  local root_password admin_password pubkey_b64 adminpw_b64 adminuser_b64 adminhome_b64 payload
+
+  load_env
+  remote_host="${AAP_CONTROLLER_IP:-${AAP_CONTROLLER_FQDN:-}}"
+  if [[ -z "${remote_host}" ]]; then
+    err "No remote host recorded. Re-run Installation Mode selection (option 2, Remote) first."
+    return 1
+  fi
+
+  local_key="${CONTROLLER_STATE_HOME}/.ssh/id_ed25519"
+  local_pub="${local_key}.pub"
+
+  if [[ ! -f "${local_key}" ]]; then
+    log "Generating local SSH keypair to reach ${ADMIN_USER}@${remote_host}."
+    mkdir -p "${CONTROLLER_STATE_HOME}/.ssh"
+    chmod 700 "${CONTROLLER_STATE_HOME}/.ssh"
+    ssh-keygen -t ed25519 -N "" -f "${local_key}" >/dev/null
+    chmod 600 "${local_key}"
+    chmod 644 "${local_pub}"
+  fi
+
+    if ssh -i "${local_key}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+      -o BatchMode=yes -o ConnectTimeout=5 "${ADMIN_USER}@${remote_host}" 'true' >/dev/null 2>&1; then
+    delete_env_key "AAP_REMOTE_ROOT_PASSWORD"
+    unset AAP_REMOTE_ROOT_PASSWORD
+    save_env_kv "AAP_CONTROLLER_SSH_KEY" "${local_key}"
+    ok "Remote admin key access already works on ${ADMIN_USER}@${remote_host}; bootstrap skipped."
+    return 0
+  fi
+
+  if ! command -v sshpass >/dev/null 2>&1; then
+    err "sshpass is required to bootstrap the remote admin user; install it and re-run."
+    return 1
+  fi
+
+  if [[ -n "${AAP_REMOTE_ROOT_PASSWORD:-}" ]]; then
+    root_password="${AAP_REMOTE_ROOT_PASSWORD}"
+    log "Using provided root SSH password for root@${remote_host}."
+  else
+    read_secret_prompt root_password "Enter root SSH password for root@${remote_host} (used once to bootstrap admin)"
+  fi
+
+  if [[ -n "${ADMIN_PASSWORD:-}" ]]; then
+    admin_password="${ADMIN_PASSWORD}"
+    log "Reusing saved admin password from ${ENV_FILE}."
+  else
+    read_secret_prompt admin_password "Enter password to set for remote admin user"
+    save_env_kv "ADMIN_PASSWORD" "${admin_password}"
+  fi
+
+  pubkey_b64="$(base64 -w0 "${local_pub}")"
+  adminpw_b64="$(printf '%s' "${admin_password}" | base64 -w0)"
+  adminuser_b64="$(printf '%s' "${ADMIN_USER}" | base64 -w0)"
+  adminhome_b64="$(printf '%s' "${ADMIN_HOME}" | base64 -w0)"
+
+  # Values are base64'd locally and decoded remotely to avoid quoting issues over ssh.
+  payload=$(cat <<REMOTE
+set -e
+PUBKEY="\$(printf '%s' '${pubkey_b64}' | base64 -d)"
+ADMINPW="\$(printf '%s' '${adminpw_b64}' | base64 -d)"
+ADMINUSER="\$(printf '%s' '${adminuser_b64}' | base64 -d)"
+ADMINHOME="\$(printf '%s' '${adminhome_b64}' | base64 -d)"
+id "\${ADMINUSER}" >/dev/null 2>&1 || useradd -m -d "\${ADMINHOME}" -s /bin/bash "\${ADMINUSER}"
+mkdir -p "\${ADMINHOME}/.ssh"
+touch "\${ADMINHOME}/.ssh/authorized_keys"
+grep -qxF "\${PUBKEY}" "\${ADMINHOME}/.ssh/authorized_keys" || echo "\${PUBKEY}" >> "\${ADMINHOME}/.ssh/authorized_keys"
+chown -R "\${ADMINUSER}:\${ADMINUSER}" "\${ADMINHOME}"
+chmod 750 "\${ADMINHOME}"
+chmod 700 "\${ADMINHOME}/.ssh"
+chmod 600 "\${ADMINHOME}/.ssh/authorized_keys"
+printf '%s:%s\n' "\${ADMINUSER}" "\${ADMINPW}" | chpasswd
+printf '%s ALL=(ALL) NOPASSWD: ALL\n' "\${ADMINUSER}" > "/etc/sudoers.d/\${ADMINUSER}"
+chmod 0440 "/etc/sudoers.d/\${ADMINUSER}"
+REMOTE
+)
+
+  # Step 1: log in as root@remote (password auth) to create/configure admin, then disconnect.
+  log "Connecting to root@${remote_host} to create and configure the admin user."
+  if ! printf '%s\n' "${payload}" | \
+      sshpass -p "${root_password}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        "root@${remote_host}" 'bash -s'; then
+    err "Failed to provision admin user on ${remote_host} as root."
+    return 1
+  fi
+  ok "admin user bootstrapped on ${remote_host}; root@${remote_host} session closed."
+
+  # Step 2: re-connect as the configured admin user (key auth).
+  log "Re-connecting as ${ADMIN_USER}@${remote_host} to confirm key-based access."
+  if ! ssh -i "${local_key}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+      -o BatchMode=yes "${ADMIN_USER}@${remote_host}" 'true'; then
+    err "${ADMIN_USER}@${remote_host} key-based login failed after bootstrap."
+    return 1
+  fi
+  delete_env_key "AAP_REMOTE_ROOT_PASSWORD"
+  unset AAP_REMOTE_ROOT_PASSWORD root_password
+  save_env_kv "AAP_CONTROLLER_SSH_KEY" "${local_key}"
+  ok "Remote admin user and SSH key authorized on ${ADMIN_USER}@${remote_host}."
 }
 
 setup_admin_user() {
@@ -826,25 +902,30 @@ setup_admin_user() {
 
   load_env
 
-  ensure_admin_user_exists
-  log "admin user is present."
+  if [[ "${INSTALL_SCOPE:-}" == "remote" ]]; then
+    provision_remote_admin_via_ssh
+    return $?
+  fi
 
-  printf '%s\n' 'admin ALL=(ALL) NOPASSWD: ALL' | run_privileged tee /etc/sudoers.d/admin >/dev/null
-  run_privileged chmod 0440 /etc/sudoers.d/admin
+  ensure_admin_user_exists
+  log "${ADMIN_USER} user is present."
+
+  printf '%s ALL=(ALL) NOPASSWD: ALL\n' "${ADMIN_USER}" | run_privileged tee "/etc/sudoers.d/${ADMIN_USER}" >/dev/null
+  run_privileged chmod 0440 "/etc/sudoers.d/${ADMIN_USER}"
 
   # Ensure admin home and SSH directory are writable by admin before key operations.
   if [[ -d "${ADMIN_HOME}" ]]; then
-    run_privileged chown admin:admin "${ADMIN_HOME}"
+    run_privileged chown "${ADMIN_USER}:${ADMIN_USER}" "${ADMIN_HOME}"
     chmod 0750 "${ADMIN_HOME}" || true
   fi
 
   mkdir -p "${ADMIN_HOME}/.ssh"
-  run_privileged chown admin:admin "${ADMIN_HOME}/.ssh"
+  run_privileged chown "${ADMIN_USER}:${ADMIN_USER}" "${ADMIN_HOME}/.ssh"
   chmod 700 "${ADMIN_HOME}/.ssh"
 
   if [[ ! -f "${ADMIN_HOME}/.ssh/id_ed25519" ]]; then
     ssh-keygen -t ed25519 -N "" -f "${ADMIN_HOME}/.ssh/id_ed25519" >/dev/null
-    run_privileged chown admin:admin "${ADMIN_HOME}/.ssh/id_ed25519" "${ADMIN_HOME}/.ssh/id_ed25519.pub"
+    run_privileged chown "${ADMIN_USER}:${ADMIN_USER}" "${ADMIN_HOME}/.ssh/id_ed25519" "${ADMIN_HOME}/.ssh/id_ed25519.pub"
     chmod 600 "${ADMIN_HOME}/.ssh/id_ed25519"
     chmod 644 "${ADMIN_HOME}/.ssh/id_ed25519.pub"
   fi
@@ -854,28 +935,28 @@ setup_admin_user() {
     log "Reusing saved admin password from ${ENV_FILE}."
   else
     read_secret_prompt admin_password "Enter password for admin user"
-    printf 'admin:%s\n' "${admin_password}" | run_privileged chpasswd
+    printf '%s:%s\n' "${ADMIN_USER}" "${admin_password}" | run_privileged chpasswd
     save_env_kv "ADMIN_PASSWORD" "${admin_password}"
   fi
 
   host_fqdn="$(hostname -f 2>/dev/null || hostname)"
 
-  if ensure_public_key_authorized admin "${ADMIN_HOME}/.ssh/id_ed25519.pub"; then
+  if ensure_public_key_authorized "${ADMIN_USER}" "${ADMIN_HOME}/.ssh/id_ed25519.pub"; then
     ok "admin SSH public key already authorized locally."
   elif command -v sshpass >/dev/null 2>&1; then
-    log "Copying admin SSH key to admin@${host_fqdn}."
+    log "Copying admin SSH key to ${ADMIN_USER}@${host_fqdn}."
     sshpass -p "${admin_password}" ssh-copy-id \
       -o StrictHostKeyChecking=no \
       -i "${ADMIN_HOME}/.ssh/id_ed25519.pub" \
-      "admin@${host_fqdn}" || warn "ssh-copy-id failed; continuing."
+      "${ADMIN_USER}@${host_fqdn}" || warn "ssh-copy-id failed; continuing."
   else
     warn "sshpass is not installed; skipping ssh-copy-id."
   fi
 
-  ensure_controller_key_authorized_for_user admin || true
+  ensure_controller_key_authorized_for_user "${ADMIN_USER}" || true
 
-  run_privileged chown -R admin:admin "${ADMIN_HOME}/.ssh"
-  setup_admin_rootless_podman
+  run_privileged chown -R "${ADMIN_USER}:${ADMIN_USER}" "${ADMIN_HOME}/.ssh"
+  run_rootless_podman_playbook "${ADMIN_USER}" false
   ok "admin user setup complete."
 }
 
@@ -909,8 +990,8 @@ EOF
     rhsm_user="${RHSM_USERNAME}"
     log "Reusing saved RHSM username from ${ENV_FILE}."
   else
-    read -r -p "Enter RHSM_USERNAME (Red Hat Login/CDN/registry/console username) [${DEFAULT_RHSM_USERNAME}]: " rhsm_user
-    rhsm_user="${rhsm_user:-${DEFAULT_RHSM_USERNAME}}"
+    rhsm_user=""
+    ask_value rhsm_user "Enter RHSM_USERNAME (Red Hat Login/CDN/registry/console username)" "${DEFAULT_RHSM_USERNAME}" || return 1
   fi
 
   if [[ -n "${RHSM_PASSWORD:-}" ]]; then
@@ -937,6 +1018,9 @@ EOF
   if [[ -n "${BUNDLE_URL:-}" ]]; then
     bundle_url="${BUNDLE_URL}"
     log "Reusing saved bundle URL from ${ENV_FILE}."
+  elif [[ "${NONINTERACTIVE}" == "true" ]]; then
+    bundle_url=""
+    log "Non-interactive: using default bundle URL."
   else
     read -r -p "Bundle URL [ENTER for default]: " bundle_url
   fi
@@ -953,8 +1037,7 @@ EOF
   save_env_kv "RH_AH_TOKEN" "${hub_token}"
   save_env_kv "BUNDLE_URL" "${bundle_url:-$BUNDLE_URL_DEFAULT}"
 
-  setup_admin_rootless_podman
-  login_registry_as_admin "${rhsm_user}" "${rhsm_pass}"
+  run_rootless_podman_playbook "${ADMIN_USER}" true "${rhsm_user}" "${rhsm_pass}"
 
   ok "Credentials and tokens ensured in ${ENV_FILE} (mode 600)."
 }
@@ -1050,7 +1133,7 @@ download_bundle() {
     warn "First lines of downloaded content:"
     head -n 5 "${tmp_bundle}" 2>/dev/null | sed 's/^/  /' || true
 
-    if [[ "${retry_depth}" -lt 1 ]]; then
+    if [[ "${retry_depth}" -lt 1 && "${NONINTERACTIVE}" != "true" ]]; then
       read -r -p "Re-enter Red Hat CDN username/password and retry download now? [Y/n]: " retry_creds
       if [[ ! "${retry_creds:-Y}" =~ ^[Nn]$ ]]; then
         read -r -p "Enter RHSM_USERNAME (Red Hat Login/CDN/registry/console username): " RHSM_USERNAME
@@ -1061,6 +1144,12 @@ download_bundle() {
         download_bundle "$((retry_depth + 1))"
         return $?
       fi
+    fi
+
+    if [[ "${NONINTERACTIVE}" == "true" ]]; then
+      err "Non-interactive mode: cannot prompt for a local bundle path. Aborting download."
+      rm -f "${tmp_bundle}" || true
+      return 1
     fi
 
     read -r -p "Enter local path to a valid AAP bundle tar.gz (or press ENTER to abort): " local_bundle_path
@@ -1087,7 +1176,8 @@ download_bundle() {
 }
 
 extract_bundle() {
-  local bundle_path file_type
+  local bundle_path file_type tar_flag actual_dir_name
+
   bundle_path="${DOWNLOAD_DIR}/${BUNDLE_FILE}"
 
   if [[ ! -f "${DOWNLOAD_DIR}/${BUNDLE_FILE}" ]]; then
@@ -1098,9 +1188,9 @@ extract_bundle() {
   log "Extracting ${BUNDLE_FILE} in ${DOWNLOAD_DIR}."
 
   if tar -tzf "${bundle_path}" >/dev/null 2>&1; then
-    tar -xzf "${bundle_path}" -C "${DOWNLOAD_DIR}"
+    tar_flag="-xzf"
   elif tar -tf "${bundle_path}" >/dev/null 2>&1; then
-    tar -xf "${bundle_path}" -C "${DOWNLOAD_DIR}"
+    tar_flag="-xf"
   else
     file_type="$(file -b "${bundle_path}" 2>/dev/null || echo "unknown")"
     err "Downloaded file is not a valid tar archive: ${bundle_path}"
@@ -1112,7 +1202,22 @@ extract_bundle() {
     return 1
   fi
 
-  chown -R admin:admin "${DOWNLOAD_DIR}/${BUNDLE_DIR_NAME}" || true
+  # The archive's top-level folder name reflects the actual bundle version,
+  # which can differ from BUNDLE_DIR_NAME if a non-default BUNDLE_URL was used.
+  actual_dir_name="$(tar -tf "${bundle_path}" 2>/dev/null | head -n1 | cut -d/ -f1)"
+
+  tar "${tar_flag}" "${bundle_path}" -C "${DOWNLOAD_DIR}"
+
+  if [[ -n "${actual_dir_name}" && "${actual_dir_name}" != "${BUNDLE_DIR_NAME}" && -d "${DOWNLOAD_DIR}/${actual_dir_name}" ]]; then
+    warn "Extracted bundle directory (${actual_dir_name}) differs from expected (${BUNDLE_DIR_NAME}); updating installer state."
+    BUNDLE_DIR_NAME="${actual_dir_name}"
+    INVENTORY_FILE="${DOWNLOAD_DIR}/${BUNDLE_DIR_NAME}/inventory-growth"
+    save_env_kv "BUNDLE_DIR_NAME" "${BUNDLE_DIR_NAME}"
+  fi
+
+  local controller_user
+  controller_user="$(get_controller_user)"
+  chown -R "${controller_user}:${controller_user}" "${DOWNLOAD_DIR}/${BUNDLE_DIR_NAME}" 2>/dev/null || true
   ok "Bundle extracted to ${DOWNLOAD_DIR}/${BUNDLE_DIR_NAME}."
 }
 
@@ -1172,7 +1277,7 @@ run_post_uninstall_cleanup() {
   load_env
   if [[ "${AAP_CLEANUP_PURGE_DOWNLOADS:-}" =~ ^([Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|1)$ ]]; then
     purge_downloads="true"
-  elif [[ -t 0 ]]; then
+  elif [[ "${NONINTERACTIVE}" != "true" && -t 0 ]]; then
     read -r -p "Also remove downloaded bundle artifacts (${install_dir} and ${DOWNLOAD_DIR}/${BUNDLE_FILE})? [y/N]: " purge_reply
     if [[ "${purge_reply:-N}" =~ ^[Yy]$ ]]; then
       purge_downloads="true"
@@ -1215,7 +1320,7 @@ should_run_post_uninstall_cleanup() {
     return 0
   fi
 
-  if [[ ! -t 0 ]]; then
+  if [[ "${NONINTERACTIVE}" == "true" || ! -t 0 ]]; then
     return 1
   fi
 
@@ -1227,7 +1332,7 @@ ensure_registry_credentials() {
   load_env
 
   if [[ -z "${RHSM_USERNAME:-}" ]]; then
-    read -r -p "Enter RHSM_USERNAME (Red Hat Login/CDN/registry/console username): " RHSM_USERNAME
+    ask_value RHSM_USERNAME "Enter RHSM_USERNAME (Red Hat Login/CDN/registry/console username)" "${DEFAULT_RHSM_USERNAME}" || return 1
     save_env_kv "RHSM_USERNAME" "${RHSM_USERNAME}"
   fi
 
@@ -1237,164 +1342,19 @@ ensure_registry_credentials() {
   fi
 }
 
-get_preferred_remote_user() {
-  local selected_user use_admin selected_uid
-  local -a fallback_candidates
-
-  load_env
-
-  if [[ -n "${AAP_REMOTE_USER:-}" ]]; then
-    if id "${AAP_REMOTE_USER}" >/dev/null 2>&1; then
-      selected_uid="$(id -u "${AAP_REMOTE_USER}" 2>/dev/null || echo 0)"
-      if [[ "${selected_uid}" != "0" ]]; then
-        printf '%s' "${AAP_REMOTE_USER}"
-        return
-      fi
-      warn "AAP_REMOTE_USER='${AAP_REMOTE_USER}' resolves to root; a non-root user is required by preflight." >&2
-    else
-      warn "AAP_REMOTE_USER='${AAP_REMOTE_USER}' does not exist on this host; a valid non-root user is required." >&2
-    fi
-  fi
-
-  if id admin >/dev/null 2>&1; then
-    selected_user="admin"
-  else
-    warn "admin user does not exist on this host." >&2
-
-    fallback_candidates=("${SUDO_USER:-}" "${USER:-}")
-    for selected_user in "${fallback_candidates[@]}"; do
-      [[ -z "${selected_user}" ]] && continue
-      if ! id "${selected_user}" >/dev/null 2>&1; then
-        continue
-      fi
-      selected_uid="$(id -u "${selected_user}" 2>/dev/null || echo 0)"
-      if [[ "${selected_uid}" == "0" ]]; then
-        continue
-      fi
-
-      warn "Using fallback remote user '${selected_user}' because admin is unavailable." >&2
-      break
-    done
-
-    if [[ -n "${selected_user:-}" ]] && id "${selected_user}" >/dev/null 2>&1; then
-      selected_uid="$(id -u "${selected_user}" 2>/dev/null || echo 0)"
-      if [[ "${selected_uid}" != "0" ]]; then
-        AAP_REMOTE_USER="${selected_user}"
-        save_env_kv "AAP_REMOTE_USER" "${AAP_REMOTE_USER}"
-        printf '%s' "${AAP_REMOTE_USER}"
-        return
-      fi
-    fi
-
-    if [[ ! -t 0 ]]; then
-      err "Cannot prompt for AAP remote user in non-interactive mode. Set AAP_REMOTE_USER to an existing non-root user in ${ENV_FILE}." >&2
-      return 1
-    fi
-
-    while true; do
-      read -r -p "Use admin as the AAP SSH user? [Y/n]: " use_admin
-      if [[ ! "${use_admin:-Y}" =~ ^[Nn]$ ]]; then
-        selected_user="admin"
-      else
-        read -r -p "Enter AAP SSH user [admin]: " selected_user
-        selected_user="${selected_user:-admin}"
-      fi
-
-      if ! id "${selected_user}" >/dev/null 2>&1; then
-        warn "Selected user '${selected_user}' does not exist. Choose an existing non-root user." >&2
-        continue
-      fi
-
-      selected_uid="$(id -u "${selected_user}" 2>/dev/null || echo 0)"
-      if [[ "${selected_uid}" == "0" ]]; then
-        warn "Selected user '${selected_user}' is root; choose a non-root user (AAP preflight requirement)." >&2
-        continue
-      fi
-
-      break
-    done
-  fi
-
-  if id "${selected_user}" >/dev/null 2>&1; then
-    selected_uid="$(id -u "${selected_user}" 2>/dev/null || echo 0)"
-    if [[ "${selected_uid}" == "0" ]]; then
-      err "Remote user '${selected_user}' is root; preflight requires non-root SSH user." >&2
-      return 1
-    fi
-  fi
-
-  AAP_REMOTE_USER="${selected_user}"
-  save_env_kv "AAP_REMOTE_USER" "${AAP_REMOTE_USER}"
-  printf '%s' "${AAP_REMOTE_USER}"
-}
-
-get_user_home() {
-  local user_name="$1"
-  local user_home
-  user_home="$(getent passwd "${user_name}" | cut -d: -f6 || true)"
-  if [[ -z "${user_home}" ]]; then
-    user_home="/home/${user_name}"
-  fi
-  printf '%s' "${user_home}"
-}
-
-get_controller_user() {
-  local selected_user
-
-  load_env
-  if [[ -n "${AAP_CONTROLLER_USER:-}" ]]; then
-    printf '%s' "${AAP_CONTROLLER_USER}"
-    return
-  fi
-
-  if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]] && id "${SUDO_USER}" >/dev/null 2>&1; then
-    selected_user="${SUDO_USER}"
-  elif [[ -n "${USER:-}" && "${USER}" != "root" ]] && id "${USER}" >/dev/null 2>&1; then
-    selected_user="${USER}"
-  elif id admin >/dev/null 2>&1; then
-    selected_user="admin"
-  else
-    selected_user="root"
-  fi
-
-  AAP_CONTROLLER_USER="${selected_user}"
-  save_env_kv "AAP_CONTROLLER_USER" "${AAP_CONTROLLER_USER}"
-  printf '%s' "${AAP_CONTROLLER_USER}"
-}
-
-get_controller_ssh_key() {
-  local controller_user controller_home key_path
-
-  load_env
-  if [[ -n "${AAP_CONTROLLER_SSH_KEY:-}" ]]; then
-    printf '%s' "${AAP_CONTROLLER_SSH_KEY}"
-    return
-  fi
-
-  controller_user="$(get_controller_user)"
-  controller_home="$(get_user_home "${controller_user}")"
-  key_path="${controller_home}/.ssh/id_ed25519"
-
-  AAP_CONTROLLER_SSH_KEY="${key_path}"
-  save_env_kv "AAP_CONTROLLER_SSH_KEY" "${AAP_CONTROLLER_SSH_KEY}"
-  printf '%s' "${AAP_CONTROLLER_SSH_KEY}"
-}
+# shellcheck source=lib/target.sh
+source "${SCRIPT_DIR}/lib/target.sh"
 
 modify_inventory_growth() {
   load_env
   ensure_registry_credentials
 
-  local inv_file admin_password target_fqdn target_domain host_line remote_user controller_key escaped_admin_password
+  local inv_file admin_password target_domain host_line escaped_admin_password
   inv_file="${INVENTORY_FILE}"
   admin_password="${ADMIN_PASSWORD:-}"
-  remote_user="$(get_preferred_remote_user)"
-  controller_key="$(get_controller_ssh_key)"
-  target_fqdn="$(hostname -f 2>/dev/null || echo aap.localdomain)"
-  target_domain="${target_fqdn#*.}"
-  if [[ "${target_domain}" == "${target_fqdn}" || -z "${target_domain}" ]]; then
-    target_domain="localdomain"
-  fi
-  host_line="${target_fqdn} ansible_host=${target_fqdn} real_hostname=${target_fqdn} ansible_user=${remote_user} ansible_ssh_private_key_file=${controller_key}"
+  resolve_target_context
+  target_domain="$(derive_domain_from_fqdn "${TARGET_FQDN}")"
+  host_line="$(build_inventory_host_line)"
 
   if [[ ! -f "${inv_file}" ]]; then
     err "inventory-growth not found: ${inv_file}"
@@ -1411,7 +1371,7 @@ modify_inventory_growth() {
 
   escaped_admin_password="$(printf '%s' "${admin_password}" | sed -e 's/[\\/&]/\\&/g')"
 
-  sed -E -i "s@aap\.example\.(com|org)@${target_fqdn}@g" "${inv_file}"
+  sed -E -i "s@aap\.example\.(com|org)@${TARGET_FQDN}@g" "${inv_file}"
   sed -E -i "s@(^|[^[:alnum:]_])example\.(com|org)([^[:alnum:]_]|$)@\\1${target_domain}\\3@g" "${inv_file}"
   sed -i "s|password=<set your own>|password={{ admin_password }}|g" "${inv_file}"
   sed -i "s|collections=false|collections=true|g" "${inv_file}"
@@ -1435,10 +1395,10 @@ modify_inventory_growth() {
   upsert_inventory_var "${inv_file}" "pg_admin_password" "${admin_password}"
   upsert_inventory_var "${inv_file}" "registry_username" "${RHSM_USERNAME:-}"
   upsert_inventory_var "${inv_file}" "registry_password" "${RHSM_PASSWORD:-}"
-  upsert_inventory_var "${inv_file}" "ansible_user" "${remote_user}"
+  upsert_inventory_var "${inv_file}" "ansible_user" "${TARGET_SSH_USER}"
   upsert_inventory_var "${inv_file}" "ansible_become" "true"
   upsert_inventory_var "${inv_file}" "ansible_become_method" "sudo"
-  upsert_inventory_var "${inv_file}" "ansible_user_dir" "/home/${remote_user}"
+  upsert_inventory_var "${inv_file}" "ansible_user_dir" "/home/${TARGET_SSH_USER}"
   upsert_inventory_var "${inv_file}" "ansible_connection" "ssh"
   upsert_inventory_var "${inv_file}" "redis_mode" "standalone"
 
@@ -1447,21 +1407,16 @@ modify_inventory_growth() {
 
 enforce_inventory_runtime_settings() {
   local inv_file="$1"
-  local target_fqdn target_domain host_line remote_user controller_user controller_home controller_key known_hosts_file escaped_admin_password
+  local target_domain host_line controller_user controller_home known_hosts_file escaped_admin_password
   ensure_registry_credentials
   load_env
   ensure_inventory_baseline_backup "${inv_file}"
-  remote_user="$(get_preferred_remote_user)"
+  resolve_target_context
   controller_user="$(get_controller_user)"
   controller_home="$(get_user_home "${controller_user}")"
-  controller_key="$(get_controller_ssh_key)"
   known_hosts_file="${controller_home}/.ssh/known_hosts"
-  target_fqdn="$(hostname -f 2>/dev/null || echo aap.localdomain)"
-  target_domain="${target_fqdn#*.}"
-  if [[ "${target_domain}" == "${target_fqdn}" || -z "${target_domain}" ]]; then
-    target_domain="localdomain"
-  fi
-  host_line="${target_fqdn} ansible_host=${target_fqdn} real_hostname=${target_fqdn} ansible_user=${remote_user} ansible_ssh_private_key_file=${controller_key}"
+  target_domain="$(derive_domain_from_fqdn "${TARGET_FQDN}")"
+  host_line="$(build_inventory_host_line)"
 
   if [[ -z "${ADMIN_PASSWORD:-}" ]]; then
     read_secret_prompt ADMIN_PASSWORD "Enter platform admin password for runtime inventory values"
@@ -1469,7 +1424,7 @@ enforce_inventory_runtime_settings() {
   fi
   escaped_admin_password="$(printf '%s' "${ADMIN_PASSWORD}" | sed -e 's/[\\/&]/\\&/g')"
 
-  sed -E -i "s@aap\.example\.(com|org)@${target_fqdn}@g" "${inv_file}"
+  sed -E -i "s@aap\.example\.(com|org)@${TARGET_FQDN}@g" "${inv_file}"
   sed -E -i "s@(^|[^[:alnum:]_])example\.(com|org)([^[:alnum:]_]|$)@\\1${target_domain}\\3@g" "${inv_file}"
   sed -E -i "s@\{\{[[:space:]]*admin_password[[:space:]]*\}\}@${escaped_admin_password}@g" "${inv_file}"
 
@@ -1483,19 +1438,19 @@ enforce_inventory_runtime_settings() {
 
   if [[ ${EUID} -eq 0 ]] && command -v runuser >/dev/null 2>&1 && id "${controller_user}" >/dev/null 2>&1; then
     runuser -u "${controller_user}" -- ssh-keygen -R aap >/dev/null 2>&1 || true
-    runuser -u "${controller_user}" -- ssh-keygen -R "${target_fqdn}" >/dev/null 2>&1 || true
+    runuser -u "${controller_user}" -- ssh-keygen -R "${TARGET_FQDN}" >/dev/null 2>&1 || true
   elif command -v sudo >/dev/null 2>&1 && id "${controller_user}" >/dev/null 2>&1; then
     HOME="${controller_home}" sudo -u "${controller_user}" ssh-keygen -R aap >/dev/null 2>&1 || true
-    HOME="${controller_home}" sudo -u "${controller_user}" ssh-keygen -R "${target_fqdn}" >/dev/null 2>&1 || true
+    HOME="${controller_home}" sudo -u "${controller_user}" ssh-keygen -R "${TARGET_FQDN}" >/dev/null 2>&1 || true
   else
     ssh-keygen -f "${known_hosts_file}" -R aap >/dev/null 2>&1 || true
-    ssh-keygen -f "${known_hosts_file}" -R "${target_fqdn}" >/dev/null 2>&1 || true
+    ssh-keygen -f "${known_hosts_file}" -R "${TARGET_FQDN}" >/dev/null 2>&1 || true
   fi
 
-  upsert_inventory_var "${inv_file}" "ansible_user" "${remote_user}"
+  upsert_inventory_var "${inv_file}" "ansible_user" "${TARGET_SSH_USER}"
   upsert_inventory_var "${inv_file}" "ansible_become" "true"
   upsert_inventory_var "${inv_file}" "ansible_become_method" "sudo"
-  upsert_inventory_var "${inv_file}" "ansible_user_dir" "/home/${remote_user}"
+  upsert_inventory_var "${inv_file}" "ansible_user_dir" "/home/${TARGET_SSH_USER}"
   upsert_inventory_var "${inv_file}" "ansible_connection" "ssh"
   upsert_inventory_var "${inv_file}" "ansible_ssh_common_args" "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
   upsert_inventory_var "${inv_file}" "registry_username" "${RHSM_USERNAME:-}"
@@ -1524,11 +1479,12 @@ run_execution_playbook() {
   install_dir="${DOWNLOAD_DIR}/${BUNDLE_DIR_NAME}"
   load_env
   ansible_verbosity="$(normalize_ansible_verbosity "${ANSIBLE_VERBOSITY:-}")"
-  remote_user="$(get_preferred_remote_user)"
+  resolve_target_context
+  remote_user="${TARGET_SSH_USER}"
   remote_uid="$(id -u "${remote_user}" 2>/dev/null || echo 1000)"
   controller_user="$(get_controller_user)"
   controller_home="$(get_user_home "${controller_user}")"
-  controller_key="$(get_controller_ssh_key)"
+  controller_key="${TARGET_SSH_KEY}"
 
   log "INFO" "Step 10 selection: playbook=${playbook_name}, remote_user=${remote_user}, controller_user=${controller_user}"
 
@@ -1544,8 +1500,7 @@ run_execution_playbook() {
 
   patch_containerized_installer_user_bus_task "${install_dir}"
   enforce_inventory_runtime_settings "${install_dir}/inventory-growth"
-  setup_admin_rootless_podman "${remote_user}"
-  login_registry_as_admin "${RHSM_USERNAME:-}" "${RHSM_PASSWORD:-}" "${remote_user}"
+  run_rootless_podman_playbook "${remote_user}" true "${RHSM_USERNAME:-}" "${RHSM_PASSWORD:-}"
 
   runtime_host_line="$(awk '/^[[:space:]]*#/ || /^\[/ || /^[[:space:]]*$/ { next } { print; exit }' "${install_dir}/inventory-growth")"
   runtime_user="$(get_inventory_var "${install_dir}/inventory-growth" "ansible_user")"
@@ -1567,8 +1522,7 @@ run_execution_playbook() {
   echo "  Become: ${runtime_become:-unset}"
   echo "  Redis mode: ${runtime_redis_mode:-unset}"
   echo
-  read -r -p "Proceed with these settings and run the installer? [Y/n]: " proceed_choice
-  if [[ "${proceed_choice:-Y}" =~ ^[Nn]$ ]]; then
+  if ! ask_yn "Proceed with these settings and run the installer? [Y/n]:" "y"; then
     warn "Installer run cancelled by operator. Returning to menu."
     return 0
   fi
@@ -1647,6 +1601,13 @@ run_execution_playbook() {
 run_install() {
   local choice playbook_name
 
+  if [[ "${NONINTERACTIVE}" == "true" ]]; then
+    playbook_name="${AAP_EXECUTION_PLAYBOOK:-install}"
+    log "Non-interactive: running execution playbook '${playbook_name}' (set AAP_EXECUTION_PLAYBOOK to override)."
+    run_execution_playbook "${playbook_name}"
+    return $?
+  fi
+
   while true; do
     clear
     cat <<'EOF'
@@ -1692,7 +1653,7 @@ show_status() {
   [[ -f "${DOWNLOAD_DIR}/${BUNDLE_FILE}" ]] && echo "bundle archive ...... PRESENT" || echo "bundle archive ...... MISSING"
   [[ -d "${DOWNLOAD_DIR}/${BUNDLE_DIR_NAME}" ]] && echo "extracted bundle .... PRESENT" || echo "extracted bundle .... MISSING"
   [[ -f "${INVENTORY_FILE}" ]] && echo "inventory-growth .... PRESENT" || echo "inventory-growth .... MISSING"
-  id admin >/dev/null 2>&1 && echo "admin user .......... PRESENT" || echo "admin user .......... MISSING"
+  id "${ADMIN_USER}" >/dev/null 2>&1 && echo "${ADMIN_USER} user .......... PRESENT" || echo "${ADMIN_USER} user .......... MISSING"
   echo "hostname -f ......... $(hostname -f 2>/dev/null || echo unknown)"
   echo "hostname -d ......... $(hostname -d 2>/dev/null || echo unknown)"
   echo
@@ -1700,16 +1661,16 @@ show_status() {
 }
 
 run_quick_standard_install_flow() {
-  local apply_relaxed_security
+  log "Quick flow: Step 1 install scope"
+  initial_install_scope_prompt
 
-  log "Quick flow: Step 1 preflight checks"
+  log "Quick flow: Step 2 preflight checks"
   preflight_dependency_checks
 
   log "Quick flow: Step 3 prework packages"
   prework_packages
 
-  read -r -p "Quick flow: apply installation firewall/SELinux relaxations (lab mode)? [y/N]: " apply_relaxed_security
-  if [[ "${apply_relaxed_security:-N}" =~ ^[Yy]$ ]]; then
+  if ask_yn "Quick flow: apply installation firewall/SELinux relaxations (lab mode)? [y/N]:" "n"; then
     log "Quick flow: Step 4 firewall/SELinux relaxations"
     disable_firewall_selinux
   else
@@ -1720,19 +1681,19 @@ run_quick_standard_install_flow() {
   set_fqdn_and_hosts
 
   log "Quick flow: Step 6 admin user"
-  setup_admin_user
+  setup_admin_user || { err "Admin user setup failed; returning to main menu."; return 1; }
 
   log "Quick flow: Step 7 credentials and tokens"
-  capture_credentials
+  capture_credentials || { err "Credential capture failed; returning to main menu."; return 1; }
 
   log "Quick flow: Step 8 bundle download"
-  download_bundle
+  download_bundle || { err "Bundle download failed; returning to main menu."; return 1; }
 
   log "Quick flow: Step 9 bundle extraction"
-  extract_bundle
+  extract_bundle || { err "Bundle extraction failed; returning to main menu."; return 1; }
 
   log "Quick flow: Step 10 inventory update"
-  modify_inventory_growth
+  modify_inventory_growth || { err "Inventory update failed; returning to main menu."; return 1; }
 
   log "Quick flow complete. Launching execution playbook submenu."
   run_install
@@ -1790,25 +1751,25 @@ EOF
 
     read -r -p "Select advanced option: " choice
     case "${choice}" in
-      1) preflight_dependency_checks; pause_enter ;;
+      1) preflight_dependency_checks || true; pause_enter ;;
       2) show_checklist ;;
-      3) prework_packages; pause_enter ;;
+      3) prework_packages || true; pause_enter ;;
       3\?) show_step_help 2 ;;
-      4) disable_firewall_selinux; pause_enter ;;
+      4) disable_firewall_selinux || true; pause_enter ;;
       4\?) show_step_help 3 ;;
-      5) set_fqdn_and_hosts; pause_enter ;;
+      5) set_fqdn_and_hosts || true; pause_enter ;;
       5\?) show_step_help 4 ;;
-      6) setup_admin_user; pause_enter ;;
+      6) setup_admin_user || true; pause_enter ;;
       6\?) show_step_help 5 ;;
-      7) capture_credentials; pause_enter ;;
+      7) capture_credentials || true; pause_enter ;;
       7\?) show_step_help 6 ;;
-      8) download_bundle; pause_enter ;;
+      8) download_bundle || true; pause_enter ;;
       8\?) show_step_help 7 ;;
-      9) extract_bundle; pause_enter ;;
+      9) extract_bundle || true; pause_enter ;;
       9\?) show_step_help 8 ;;
-      10) modify_inventory_growth; pause_enter ;;
+      10) modify_inventory_growth || true; pause_enter ;;
       10\?) show_step_help 9 ;;
-      11) run_install; pause_enter ;;
+      11) run_install || true; pause_enter ;;
       11\?) show_step_help 10 ;;
       12) show_status ;;
       0) return 0 ;;
@@ -1832,29 +1793,32 @@ AAP 2.7-2 Production Installer Assistant
 5) Execute playbook (submenu)
 6) Inspect (checklist/status)
 7) Advanced step-by-step menu
+8) Set install scope (local/remote)
 0) Exit
 EOF
 
     read -r -p "Select menu option: " choice
     case "${choice}" in
-      1) run_quick_standard_install_flow; pause_enter ;;
-      2) preflight_dependency_checks; pause_enter ;;
+      1) run_quick_standard_install_flow || true; pause_enter ;;
+      2) preflight_dependency_checks || true; pause_enter ;;
       3)
-        prework_packages
-        set_fqdn_and_hosts
-        setup_admin_user
-        capture_credentials
+        initial_install_scope_prompt
+        prework_packages || true
+        set_fqdn_and_hosts || true
+        setup_admin_user || true
+        capture_credentials || true
         pause_enter
         ;;
       4)
-        download_bundle
-        extract_bundle
-        modify_inventory_growth
+        download_bundle || true
+        extract_bundle || true
+        modify_inventory_growth || true
         pause_enter
         ;;
-      5) run_install; pause_enter ;;
+      5) run_install || true; pause_enter ;;
       6) inspect_menu ;;
       7) advanced_menu ;;
+      8) initial_install_scope_prompt; pause_enter ;;
       0) exit 0 ;;
       *) warn "Invalid menu option."; pause_enter ;;
     esac
@@ -1862,33 +1826,62 @@ EOF
 }
 
 main() {
+  local arg
+  for arg in "$@"; do
+    case "${arg}" in
+      --non-interactive|-y) NONINTERACTIVE=true ;;
+    esac
+  done
+  if [[ "${NONINTERACTIVE}" != "true" && ! -t 0 ]]; then
+    NONINTERACTIVE=true
+    warn "stdin is not a terminal; forcing non-interactive mode."
+  fi
+
+  validate_admin_identity
   require_root
   enforce_admin_home_ownership
   mkdir -p "${DOWNLOAD_DIR}"
   initialize_env_file
   # Prompt whether this is a local or remote install and prepare inventory
   initial_install_scope_prompt
+
+  if [[ "${NONINTERACTIVE}" == "true" ]]; then
+    log "Non-interactive mode: running the quick standard install flow automatically."
+    run_quick_standard_install_flow
+    exit $?
+  fi
+
   menu
 }
 
 initial_install_scope_prompt() {
-  local choice ctl_ip ctl_fqdn install_host inv_dir inv_file
+  local choice ctl_ip ctl_fqdn ctl_shorthost ctl_domain saved_fqdn default_shorthost default_domain
+  local install_host inv_dir inv_file local_controller_key
 
   inv_dir="${SCRIPT_DIR}/aap_workflow_project/inventory"
   inv_file="${inv_dir}/controller.ini"
 
   mkdir -p "${inv_dir}"
+  load_env
 
   while true; do
-    clear
-    cat <<'EOF'
+    if [[ "${NONINTERACTIVE}" == "true" ]]; then
+      case "${INSTALL_SCOPE:-}" in
+        remote) choice="2" ;;
+        *) choice="1" ;;
+      esac
+      log "Non-interactive: using install scope option ${choice} (INSTALL_SCOPE=${INSTALL_SCOPE:-local})."
+    else
+      clear
+      cat <<'EOF'
 Installation Mode
 =================
 1) Local (install on this system)
 2) Remote (install on remote controller)
 EOF
 
-    read -r -p "Select option (1/2): " choice
+      read -r -p "Select option (1/2): " choice
+    fi
     case "${choice}" in
       1)
         log "Selected local install. Inventory set to use localhost."
@@ -1906,19 +1899,40 @@ EOF
         break
         ;;
       2)
-        read -r -p "Enter controller IP or hostname (example: 192.168.122.140): " ctl_ip
-        read -r -p "Enter controller FQDN (example: aap.example.com): " ctl_fqdn
+        ctl_ip="${AAP_CONTROLLER_IP:-}"
+        ask_value ctl_ip "Enter controller IP or hostname (example: 192.0.2.10)" "${AAP_CONTROLLER_IP:-}" || return 1
+        saved_fqdn="${AAP_CONTROLLER_FQDN:-}"
+        default_shorthost="aap"
+        default_domain="example.com"
+        if [[ -n "${saved_fqdn}" ]]; then
+          default_shorthost="${saved_fqdn%%.*}"
+          if [[ "${saved_fqdn}" == *.* ]]; then
+            default_domain="${saved_fqdn#*.}"
+          fi
+        fi
+        ctl_shorthost=""
+        ask_value ctl_shorthost "What will the system short hostname be [${default_shorthost}]" "${default_shorthost}"
+        ctl_domain=""
+        ask_value ctl_domain "What is the domain for your machine [${default_domain}]" "${default_domain}"
+        ctl_fqdn="${ctl_shorthost}.${ctl_domain}"
         if [[ -z "${ctl_ip}" && -z "${ctl_fqdn}" ]]; then
           warn "Controller host is required for remote installs."
+          if [[ "${NONINTERACTIVE}" == "true" ]]; then
+            err "Non-interactive mode: no controller IP available. Set AAP_CONTROLLER_IP in ${ENV_FILE} and re-run."
+            return 1
+          fi
           continue
         fi
         ctl_ip="${ctl_ip:-${ctl_fqdn}}"
         install_host="$(hostname -f 2>/dev/null || hostname)"
+        # Private key lives on THIS (local/controller) host under the invoking
+        # user's home; admin's account/home is provisioned on the remote target.
+        local_controller_key="${CONTROLLER_STATE_HOME}/.ssh/id_ed25519"
 
-        log "Writing remote inventory to ${inv_file} (controller=${ctl_ip})"
+        log "Writing remote inventory to ${inv_file} (controller=${ctl_fqdn}, ansible_host=${ctl_ip})"
         cat > "${inv_file}" <<EOF
 [controller]
-${ctl_ip} ansible_host=${ctl_ip} ansible_user=admin ansible_ssh_private_key_file=/home/admin/.ssh/id_ed25519
+${ctl_fqdn} ansible_host=${ctl_ip} ansible_user=${ADMIN_USER} ansible_ssh_private_key_file=${local_controller_key}
 
 [installhost]
 ${install_host} ansible_connection=local
@@ -1939,4 +1953,6 @@ EOF
   done
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

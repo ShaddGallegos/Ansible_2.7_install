@@ -1,0 +1,6 @@
+---
+aap27_preflight_min_cpu: 4
+aap27_preflight_min_ram_gb: 16
+aap27_preflight_min_disk_gb: 40
+aap27_preflight_disk_path: /
+aap27_preflight_fail_on_insufficient: false

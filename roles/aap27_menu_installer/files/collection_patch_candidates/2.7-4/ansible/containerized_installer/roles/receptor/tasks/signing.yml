@@ -1,0 +1,83 @@
+---
+- name: Generate RSA key pair
+  when:
+    - receptor_signing_private_key is not defined
+    - receptor_signing_public_key is not defined
+  run_once: true
+  block:
+    - name: Install python-cryptography
+      ansible.builtin.package:
+        name: python3-cryptography
+      become: true
+      when:
+        - not ostree | bool
+        - _receptor_type in ['control', 'hybrid']
+
+    - name: Generate a RSA private key
+      community.crypto.openssl_privatekey:
+        path: '{{ receptor_conf_dir }}/signing_private.pem'
+        type: RSA
+        format: pkcs1
+        mode: '0400'
+      when: _receptor_type in ['control', 'hybrid']
+
+    - name: Generate a RSA public key
+      community.crypto.openssl_publickey:
+        path: '{{ receptor_conf_dir }}/signing_public.pem'
+        privatekey_path: '{{ receptor_conf_dir }}/signing_private.pem'
+        format: PEM
+        mode: '0640'
+      when: _receptor_type in ['control', 'hybrid']
+
+    - name: Copy signing RSA keys to other nodes
+      block:
+        - name: Read RSA public key from generator node
+          ansible.builtin.slurp:
+            src: '{{ receptor_conf_dir }}/signing_public.pem'
+          register: _signing_public_content
+
+        - name: Read RSA private key from generator node
+          ansible.builtin.slurp:
+            src: '{{ receptor_conf_dir }}/signing_private.pem'
+          register: _signing_private_content
+
+        - name: Copy RSA public key
+          ansible.builtin.copy:
+            content: '{{ _signing_public_content.content | b64decode }}'
+            dest: '{{ receptor_conf_dir }}/signing_public.pem'
+            mode: '0640'
+          run_once: false
+          when: _receptor_type in ['control', 'execution', 'hybrid']
+          notify: Restart receptor
+
+        - name: Copy RSA private key
+          ansible.builtin.copy:
+            content: '{{ _signing_private_content.content | b64decode }}'
+            dest: '{{ receptor_conf_dir }}/signing_private.pem'
+            mode: '0400'
+          run_once: false
+          when: _receptor_type in ['control', 'hybrid']
+          notify: Restart receptor
+
+- name: Import RSA key pair
+  when:
+    - receptor_signing_private_key is defined
+    - receptor_signing_public_key is defined
+  block:
+    - name: Copy receptor signing RSA public key
+      ansible.builtin.copy:
+        src: '{{ receptor_signing_public_key }}'
+        dest: '{{ receptor_conf_dir }}/signing_public.pem'
+        mode: '0640'
+        remote_src: '{{ receptor_signing_remote | default(false) }}'
+      when: _receptor_type in ['control', 'execution', 'hybrid']
+      notify: Restart receptor
+
+    - name: Copy receptor signing RSA private key
+      ansible.builtin.copy:
+        src: '{{ receptor_signing_private_key }}'
+        dest: '{{ receptor_conf_dir }}/signing_private.pem'
+        mode: '0400'
+        remote_src: '{{ receptor_signing_remote | default(false) }}'
+      when: _receptor_type in ['control', 'hybrid']
+      notify: Restart receptor

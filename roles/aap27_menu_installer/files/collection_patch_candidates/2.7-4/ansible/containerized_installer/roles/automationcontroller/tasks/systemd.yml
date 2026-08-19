@@ -1,0 +1,126 @@
+---
+- name: Set facts for systemd services
+  ansible.builtin.set_fact:
+    __services:
+      - automation-controller-task.service
+      - automation-controller-web.service
+      - automation-controller-rsyslog.service
+    __controller_runtime_packages:
+      RedHat:
+        - redis
+        - postgresql
+      Debian:
+        - redis-server
+        - postgresql
+      Suse:
+        - redis
+        - postgresql
+
+- name: Ensure linger is enabled for automation controller service user
+  become: true
+  ansible.builtin.command:
+    cmd: loginctl enable-linger {{ ansible_user }}
+  changed_when: false
+
+- name: Ensure systemd user manager is started for automation controller service user
+  become: true
+  ansible.builtin.command:
+    cmd: systemctl start user@{{ ansible_user_uid }}.service
+  changed_when: false
+
+- name: Reload automation controller user systemd manager
+  become: true
+  ansible.builtin.command:
+    cmd: systemctl --machine={{ ansible_user }}@ --user daemon-reload
+
+- name: Install runtime packages required by automation controller services
+  become: true
+  ansible.builtin.package:
+    name: "{{ __controller_runtime_packages[ansible_os_family] | default([]) }}"
+    state: present
+  register: __automationcontroller_runtime_package_install
+  failed_when: false
+  when: ansible_os_family in __controller_runtime_packages
+
+- name: Check whether required systemd services exist for automation controller runtime
+  become: true
+  ansible.builtin.command:
+    cmd: systemctl cat {{ item }}
+  loop:
+    - postgresql.service
+    - redis.service
+    - redis-unix.service
+  register: __automationcontroller_runtime_unit_checks
+  changed_when: false
+  failed_when: false
+
+- name: Start required systemd services when they exist
+  become: true
+  ansible.builtin.command:
+    cmd: systemctl start {{ item.item }}
+  loop: "{{ __automationcontroller_runtime_unit_checks.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  register: __automationcontroller_runtime_service_starts
+  changed_when: false
+  failed_when: false
+  when: item.rc | default(1) == 0
+
+- name: Warn when runtime dependency packages or services could not be prepared
+  ansible.builtin.debug:
+    msg: >-
+      Automation controller runtime dependency preparation reported package rc={{ __automationcontroller_runtime_package_install.rc | default('n/a') }}
+      and service start rc={{ item.rc | default('n/a') }} for {{ item.item | default('n/a') }}.
+  loop: "{{ __automationcontroller_runtime_service_starts.results | default([]) }}"
+  when:
+    - item.rc | default(0) != 0
+
+- name: Enable automation controller user services
+  become: true
+  ansible.builtin.command:
+    cmd: systemctl --machine={{ ansible_user }}@ --user enable {{ item }}
+  loop: '{{ __services }}'
+  when: __systemd_enabled | default(true)
+
+- name: Disable automation controller user services
+  become: true
+  ansible.builtin.command:
+    cmd: systemctl --machine={{ ansible_user }}@ --user disable {{ item }}
+  loop: '{{ __services }}'
+  when: not (__systemd_enabled | default(true))
+
+- name: Reset failed automation controller services before start
+  become: true
+  ansible.builtin.command:
+    cmd: systemctl --machine={{ ansible_user }}@ --user reset-failed {{ item }}
+  changed_when: false
+  failed_when: false
+  loop: '{{ __services }}'
+  when: (__systemd_state | default("started")) == 'started'
+
+- name: Start automation controller user services
+  become: true
+  ansible.builtin.command:
+    cmd: systemctl --machine={{ ansible_user }}@ --user start {{ item }}
+  loop: '{{ __services }}'
+  register: __automationcontroller_start_results
+  failed_when: false
+  when: (__systemd_state | default("started")) == 'started'
+
+- name: Warn when automation controller user services fail to start
+  ansible.builtin.debug:
+    msg: >-
+      Automation controller user service start failed for {{ item.item }}
+      with rc={{ item.rc | default('n/a') }} and stderr={{ item.stderr | default('n/a') }}.
+  loop: "{{ __automationcontroller_start_results.results | default([]) }}"
+  when:
+    - __automationcontroller_start_results is defined
+    - item.rc | default(0) != 0
+
+- name: Stop automation controller user services
+  become: true
+  ansible.builtin.command:
+    cmd: systemctl --machine={{ ansible_user }}@ --user stop {{ item }}
+  loop: '{{ __services }}'
+  when: (__systemd_state | default("started")) == 'stopped'
+...
