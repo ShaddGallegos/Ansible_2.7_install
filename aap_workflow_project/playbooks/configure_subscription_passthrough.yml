@@ -1,6 +1,6 @@
 ---
 - name: Configure RHEL host for container subscription pass-through
-  hosts: all
+  hosts: controller
   become: true
   vars:
     # Set to true to fail fast when the host is not currently subscribed.

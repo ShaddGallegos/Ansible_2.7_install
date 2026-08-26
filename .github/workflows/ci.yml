@@ -62,11 +62,11 @@ jobs:
 
       - name: Bash syntax check
         run: >-
-          bash -n aap27_menu_installer.sh lib/*.sh tests/*.sh
+          bash -n aap27_installer.sh lib/*.sh tests/*.sh
 
       - name: Shellcheck main script
         run: >-
-          shellcheck aap27_menu_installer.sh lib/*.sh tests/*.sh
+          shellcheck aap27_installer.sh lib/*.sh tests/*.sh
 
       - name: Run shell test suite
         run: bash tests/test_aap27_menu_installer.sh
@@ -105,7 +105,8 @@ jobs:
 
       - name: Lint maintained Ansible
         run: >-
-          ansible-lint roles/aap27_rootless_podman roles/aap27_defaults
+          ansible-lint roles/aap27_rootless_podman roles/aap27_http_redirect
+          roles/aap27_defaults
           roles/aap27_preflight roles/aap27_menu_installer
           aap_workflow_project/playbooks
 

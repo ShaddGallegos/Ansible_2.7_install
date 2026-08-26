@@ -1,6 +1,6 @@
 ---
 - name: Run AAP 2.7 workflow role
-  hosts: all
+  hosts: controller
   become: true
   gather_facts: true
 

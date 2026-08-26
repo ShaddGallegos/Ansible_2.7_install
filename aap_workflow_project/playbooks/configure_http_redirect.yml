@@ -1,0 +1,17 @@
+---
+- name: Configure AAP HTTP to HTTPS redirect
+  hosts: controller
+  become: true
+  gather_facts: false
+
+  vars:
+    platform_admin_user: "{{ admin_user | default('admin') }}"
+    platform_admin_home: "{{ admin_home | default('/home/' ~ platform_admin_user) }}"
+    target_fqdn: "{{ default_fqdn | default('aap.example.com') }}"
+
+  roles:
+    - role: aap27_http_redirect
+      vars:
+        aap27_http_redirect_user: "{{ platform_admin_user }}"
+        aap27_http_redirect_home: "{{ platform_admin_home }}"
+        aap27_http_redirect_fallback_host: "{{ target_fqdn }}"

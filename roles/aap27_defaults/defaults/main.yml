@@ -1,4 +1,5 @@
 ---
 aap27_defaults_use_local_env: false
-aap27_defaults_env_file: env.yml
+aap27_defaults_env_file: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ansible/conf/env.yml"
+aap27_defaults_project_key: "Ansible_2.7_install"
 aap27_defaults_precedence: "noninteractive"

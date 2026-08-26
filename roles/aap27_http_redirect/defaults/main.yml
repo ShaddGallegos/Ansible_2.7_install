@@ -1,0 +1,7 @@
+---
+aap27_http_redirect_user: admin
+aap27_http_redirect_home: "/home/{{ aap27_http_redirect_user }}"
+aap27_http_redirect_port: 80
+aap27_http_redirect_https_port: 443
+aap27_http_redirect_fallback_host: localhost
+aap27_http_redirect_configure_unprivileged_port: true

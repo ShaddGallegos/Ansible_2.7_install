@@ -24,6 +24,8 @@ Use this checklist before running the installer or the AAP workflow project.
 
 - [ ] Root or passwordless sudo access
 - [ ] `admin` can run this script directly with passwordless sudo
+- [ ] Install scope selected: `local` or `remote`
+- [ ] For remote scope, remote admin bootstrap completed before target prework
 - [ ] RHEL host meets CPU/RAM/storage requirements
 - [ ] DNS and reverse DNS configured
 - [ ] NTP/chrony synchronized
@@ -41,7 +43,8 @@ Use this checklist before running the installer or the AAP workflow project.
 
 ## Platform Components
 
-- [ ] AAP bundle downloaded to `/home/admin/Downloads/`
+- [ ] Local scope: bundle is under the invoking user's `Downloads` directory
+- [ ] Remote scope: bundle is under `<ADMIN_HOME>/Downloads` on the target
 - [ ] Bundle extracted
 - [ ] `inventory-growth` updated
 - [ ] Execution playbook selected and verified

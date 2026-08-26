@@ -1,0 +1,20 @@
+---
+- name: Prepare target-local inventory-growth
+  hosts: controller
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Apply inventory-growth role
+      ansible.builtin.include_role:
+        name: aap27_inventory_growth
+      vars:
+        aap27_inventory_growth_file: "{{ inventory_growth_file }}"
+        aap27_inventory_growth_target_fqdn: "{{ target_fqdn }}"
+        aap27_inventory_growth_target_address: "{{ target_address }}"
+        aap27_inventory_growth_real_hostname: "{{ ansible_hostname }}"
+        aap27_inventory_growth_admin_user: "{{ admin_user | default('admin') }}"
+        aap27_inventory_growth_admin_home: "{{ admin_home | default('/home/' ~ (admin_user | default('admin'))) }}"
+        aap27_inventory_growth_admin_password: "{{ admin_password }}"
+        aap27_inventory_growth_registry_username: "{{ rhsm_username | default(registry_username | default('')) }}"
+        aap27_inventory_growth_registry_password: "{{ rhsm_password | default(registry_password | default('')) }}"

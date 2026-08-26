@@ -8,14 +8,16 @@ Fastest path to running the AAP 2.7-2 menu installer.
   download/extraction, and inventory setup for AAP 2.7 containerized install.
 - Supports two install scopes: **local** (this host becomes the AAP node) and
   **remote** (a separate host is bootstrapped and installed over SSH).
-- Can run fully unattended via `--non-interactive`, driven by env vars stored
-  in `~/.aap27_install.env`.
+- Can run the automated full-install workflow via `--non-interactive`, driven
+  by env vars stored in `~/.ansible/conf/env.yml` (vault-encrypted, shared across
+  identity are always prompted before automation begins.
 
 ## Prerequisites
 
 - RHEL-family host with `sudo` access.
 - For remote scope: SSH reachability to the target host and its `root`
-  password (used once to bootstrap the `admin` account there).
+  password (used once through `sshpass` to register RHEL, enable repositories,
+  install prerequisites, and bootstrap the `admin` account there).
 - RHSM/Red Hat account credentials and tokens (see `CHECKLIST.md`).
 
 ## Common commands
@@ -23,14 +25,16 @@ Fastest path to running the AAP 2.7-2 menu installer.
 Interactive menu (recommended for first run):
 
 ```bash
-./aap27_menu_installer.sh
+./aap27_installer.sh
 ```
 
-Non-interactive, using previously saved values in `~/.aap27_install.env`
-(falls back to safe defaults / errors clearly on missing required secrets):
+Automated full install, using previously saved values in
+`~/.ansible/conf/env.yml` (under this project's `Ansible_2.7_install:` section)
+after prompting for scope and, for remote installs,
+target IP, short hostname, and domain:
 
 ```bash
-./aap27_menu_installer.sh --non-interactive
+./aap27_installer.sh --non-interactive
 ```
 
 Run the regression tests:
@@ -52,6 +56,7 @@ bash tests/test_aap27_menu_installer.sh
 | `RH_OFFLINE_TOKEN` / `RH_AH_TOKEN` | Offline API token / Automation Hub token |
 | `BUNDLE_URL` | Override the default AAP setup bundle download URL |
 | `AAP_MIN_CPU` / `AAP_MIN_RAM_GB` / `AAP_MIN_DISK_GB` | Preflight resource minimums |
+| `AAP_APPLY_COLLECTION_PATCHES` | Apply the version-gated collection patch overlay; set `false` for unvalidated newer bundles |
 
 ## Next steps
 

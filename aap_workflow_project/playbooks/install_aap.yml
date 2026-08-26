@@ -1,26 +1,27 @@
 ---
 - name: Configure inventory-growth and install AAP 2.7
-  hosts: all
+  hosts: controller
   become: true
   gather_facts: true
+  
+  # Prompt removed (not supported with conditional). Default comes from env or 'redhat'.
 
   vars:
     installer_remote_user: "{{ remote_user | default(machine_credential_username | default('admin')) }}"
     platform_admin_user: "{{ admin_user | default('admin') }}"
     platform_admin_home: "{{ admin_home | default('/home/' ~ platform_admin_user) }}"
+    postgresql_admin_password: "{{ lookup('env','POSTGRESQL_ADMIN_PASSWORD') | default('redhat') }}"
     installer_bundle_dir: >-
       {{ bundle_dir | default(platform_admin_home ~ '/Downloads/' ~
          (bundle_dir_name | default('ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64'))) }}
     installer_inventory_file: "{{ installer_bundle_dir }}/inventory-growth"
     target_fqdn: "{{ default_fqdn | default('aap.example.com') }}"
+    target_address: "{{ ansible_host | default(target_fqdn) }}"
     remote_user_uid: "1000"
     admin_password: ""
     rhsm_username: "{{ registry_username | default('') }}"
     rhsm_password: "{{ registry_password | default('') }}"
     execution_playbook: "install"
-    runtime_host_line: >-
-      ansible_host={{ ansible_default_ipv4.address }} real_hostname={{ ansible_hostname }}
-      ansible_user={{ installer_remote_user }} ansible_ssh_private_key_file=/home/{{ installer_remote_user }}/.ssh/id_ed25519
     allowed_execution_playbooks:
       - install
       - backup
@@ -46,62 +47,230 @@
           '{{ machine_credential_username | default('undefined') }}' so SSH user,
           rootless podman setup, and installer runtime remain aligned.
 
-    - name: Validate inventory-growth exists
+    - name: Detect bundle directory file on controller
       ansible.builtin.stat:
-        path: "{{ installer_inventory_file }}"
-      register: inv_stat
+        path: "{{ platform_admin_home }}/Downloads/.aap27_bundle_dir"
+      register: aap27_bundle_dir_file
 
-    - name: Fail when inventory-growth missing
-      ansible.builtin.fail:
-        msg: "inventory-growth not found at {{ installer_inventory_file }}"
-      when: not inv_stat.stat.exists
+    - name: Read bundle directory name from .aap27_bundle_dir
+      ansible.builtin.slurp:
+        path: "{{ platform_admin_home }}/Downloads/.aap27_bundle_dir"
+      register: aap27_bundle_dir_content
+      when: aap27_bundle_dir_file.stat.exists
 
-    - name: Replace example hostnames globally
-      ansible.builtin.replace:
-        path: "{{ installer_inventory_file }}"
-        regexp: "aap\\.example\\.(com|org)"
-        replace: "aap {{ runtime_host_line }}"
+    - name: Set dynamic installer bundle dir and inventory path
+      ansible.builtin.set_fact:
+        installer_bundle_dir: >-
+          {{ (platform_admin_home ~ '/Downloads/' ~ (aap27_bundle_dir_content.content | b64decode | trim))
+             if (aap27_bundle_dir_file.stat.exists) else
+             ( bundle_dir | default(platform_admin_home ~ '/Downloads/' ~
+             (bundle_dir_name | default('ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64'))) ) }}
+        installer_inventory_file: "{{ (installer_bundle_dir | default('')) ~ '/inventory-growth' }}"
+      no_log: false
 
-    - name: Normalize non-vars host lines for runtime user and host identity
-      ansible.builtin.replace:
-        path: "{{ installer_inventory_file }}"
-        regexp: "^(?!#|\\[|\\s*$).+$"
-        replace: "{{ target_fqdn }} {{ runtime_host_line }}"
-
-    - name: Replace installer password placeholder
-      ansible.builtin.replace:
-        path: "{{ installer_inventory_file }}"
-        regexp: "password=<set your own>"
-        replace: "password={{ admin_password }}"
+    # --- Initial prompting stage: ensure installer node ~/.ansible/conf/env.yml contains required secrets
+    - name: Define initial set of installer env keys we want present early
+      ansible.builtin.set_fact:
+        initial_installer_env_keys:
+          - controller_admin_password
+          - controller_pg_password
+          - hub_admin_password
+          - hub_pg_password
+          - eda_admin_password
+          - eda_pg_password
+          - postgresql_admin_password
       no_log: true
 
-    - name: Enable collections
-      ansible.builtin.replace:
-        path: "{{ installer_inventory_file }}"
-        regexp: "collections=false"
-        replace: "collections=true"
+    - name: Stat installer node env file (initial)
+      ansible.builtin.stat:
+        path: "{{ platform_admin_home }}/.ansible/conf/env.yml"
+      register: initial_remote_env_stat
 
-    - name: Ensure [all:vars] exists
-      ansible.builtin.lineinfile:
-        path: "{{ installer_inventory_file }}"
-        line: "[all:vars]"
-        state: present
+    - name: Slurp installer node env.yml (initial, if present)
+      ansible.builtin.slurp:
+        path: "{{ platform_admin_home }}/.ansible/conf/env.yml"
+      register: initial_remote_env_content
+      when: initial_remote_env_stat.stat.exists | default(false)
+      no_log: true
 
-    - name: Set required all:vars entries
-      ansible.builtin.blockinfile:
-        path: "{{ installer_inventory_file }}"
-        marker: "# {mark} MANAGED BY AAP WORKFLOW"
-        insertafter: "^\\[all:vars\\]$"
-        block: |
-          admin_password='{{ admin_password }}'
-          pg_admin_password='{{ admin_password }}'
-          registry_username='{{ rhsm_username }}'
-          registry_password='{{ rhsm_password }}'
-          ansible_user='{{ installer_remote_user }}'
-          ansible_become='true'
-          ansible_become_method='sudo'
-          ansible_connection='ssh'
+    - name: Parse installer node env.yml into dict (initial)
+      ansible.builtin.set_fact:
+        initial_remote_installer_env: "{{ (initial_remote_env_content.content | b64decode | from_yaml) if (initial_remote_env_content is defined and initial_remote_env_content.content is defined) else {} }}"
+      no_log: true
+
+    - name: Compute missing initial secrets on installer node
+      ansible.builtin.set_fact:
+        missing_initial_secrets: >-
+          {{ initial_installer_env_keys | difference((initial_remote_installer_env.keys() | list)) }}
+      no_log: true
+
+    - name: If interactive_prompt=true, prompt locally for missing initial secrets
+      vars:
+        prompt_list: "{{ missing_initial_secrets }}"
+      block:
+        - name: Prompt for secret (initial, local)
+          ansible.builtin.pause:
+            prompt: "Enter value for {{ item }} (will be stored on installer node)"
+          register: initial_pause_results
+          loop: "{{ prompt_list }}"
+          loop_control:
+            loop_var: item
+
+        - name: Export initial pause results to prompted_* variables
+          ansible.builtin.set_fact: "{{ { ('prompted_' + item.item): item.user_input } }}"
+          loop: "{{ initial_pause_results.results | default([]) }}"
+          loop_control:
+            loop_var: item
+
+        - name: Collect prompted initial secrets into dict
+          ansible.builtin.set_fact:
+            prompted_initial_secrets: >-
+              {{ dict( (missing_initial_secrets | default([])) | zip( missing_initial_secrets | map('regex_replace','^(.*)$','prompted_\\1') | map('extract', vars) ) ) }}
           no_log: true
+
+        - name: Ensure remote ~/.ansible/conf exists on installer node (initial write)
+          ansible.builtin.file:
+            path: "{{ platform_admin_home }}/.ansible/conf"
+            state: directory
+            owner: "{{ platform_admin_user }}"
+            group: "{{ platform_admin_group | default(platform_admin_user) }}"
+            mode: '0700'
+
+        - name: Merge prompted initial secrets into remote env and write to installer node (initial)
+          ansible.builtin.copy:
+            dest: "{{ platform_admin_home }}/.ansible/conf/env.yml"
+            content: "{{ (initial_remote_installer_env | default({})) | combine(prompted_initial_secrets | default({}), recursive=True) | to_nice_yaml }}"
+            owner: "{{ platform_admin_user }}"
+            mode: "0600"
+          no_log: true
+      when: (interactive_prompt | default(false)) | bool
+
+    - name: If non-interactive and missing secrets, try remote helper on installer node
+      block:
+        - name: Ensure remote prompt helper exists for initial remote prompting
+          ansible.builtin.copy:
+            dest: "{{ platform_admin_home }}/.ansible/bin/remote_prompt_and_write_env.sh"
+            mode: '0700'
+            owner: "{{ platform_admin_user }}"
+            group: "{{ platform_admin_group | default(platform_admin_user) }}"
+            content: |
+              #!/bin/sh
+              set -euo pipefail
+              ENVFILE="${HOME}/.ansible/conf/env.yml"
+              TMPFILE="${ENVFILE}.$$".tmp
+              mkdir -p "$(dirname "$ENVFILE")"
+              umask 077
+              if [ ! -f "$ENVFILE" ]; then
+                touch "$ENVFILE"
+                chmod 600 "$ENVFILE"
+              fi
+              cp -f "$ENVFILE" "$TMPFILE"
+              for key in "$@"; do
+                if grep -q -E "^${key}:" "$ENVFILE"; then
+                  continue
+                fi
+                if [ -t 0 ]; then
+                  printf "Enter value for %s: " "$key" >&2
+                  stty -echo
+                  read val || true
+                  stty echo
+                  printf "\n" >&2
+                else
+                  echo "Missing tty to prompt for ${key}" >&2
+                  rm -f "$TMPFILE"
+                  exit 2
+                fi
+                esc=$(printf "%s" "$val" | sed "s/'/'\\''/g")
+                printf "%s: '%s'\n" "$key" "$esc" >> "$TMPFILE"
+              done
+              chmod 600 "$TMPFILE"
+              mv "$TMPFILE" "$ENVFILE"
+              chmod 600 "$ENVFILE"
+          become: true
+          become_user: "{{ platform_admin_user }}"
+          no_log: true
+
+        - name: Run remote prompt helper for missing initial secrets (non-interactive)
+          ansible.builtin.command:
+            argv: ["/bin/sh", "-c", "{{ platform_admin_home }}/.ansible/bin/remote_prompt_and_write_env.sh {{ missing_initial_secrets | join(' ') }}"]
+          become: true
+          become_user: "{{ platform_admin_user }}"
+          register: initial_remote_helper_result
+          failed_when: false
+          changed_when: false
+          no_log: true
+
+        - name: Fail with guidance if remote helper couldn't prompt (no TTY)
+          ansible.builtin.fail:
+            msg: >-
+              Remote installer cannot prompt (no TTY). Run with
+              `interactive_prompt=true` to prompt locally, or SSH to the installer
+              node and run `~/.ansible/bin/remote_prompt_and_write_env.sh {{ missing_initial_secrets | join(' ') }}` as the installer user to populate ~/.ansible/conf/env.yml.
+          when: initial_remote_helper_result is defined and initial_remote_helper_result.rc == 2
+      when: (missing_initial_secrets | length > 0) and not (interactive_prompt | default(false))
+
+    - name: Apply version-gated bundle compatibility fixes
+      ansible.builtin.include_role:
+        name: aap27_bundle_hotfixes
+        apply:
+          tags:
+            - aap27_bundle_hotfixes
+      tags:
+        - aap27_bundle_hotfixes
+      vars:
+        aap27_bundle_hotfixes_bundle_dir: "{{ installer_bundle_dir }}"
+        aap27_bundle_hotfixes_controller_user: "{{ platform_admin_user }}"
+
+    - name: Prepare target-local inventory-growth
+      ansible.builtin.include_role:
+        name: aap27_inventory_growth
+      vars:
+        aap27_inventory_growth_file: >-
+          {{ ((platform_admin_home ~ '/Downloads/' ~ (aap27_bundle_dir_content.content | b64decode | trim)) ~ '/inventory-growth')
+             if (aap27_bundle_dir_content is defined and aap27_bundle_dir_content.content is defined)
+             else installer_inventory_file }}
+        aap27_inventory_growth_target_fqdn: "{{ target_fqdn }}"
+        aap27_inventory_growth_target_address: "{{ target_address }}"
+        aap27_inventory_growth_real_hostname: "{{ ansible_hostname }}"
+        aap27_inventory_growth_admin_user: "{{ platform_admin_user }}"
+        aap27_inventory_growth_admin_home: "{{ platform_admin_home }}"
+        aap27_inventory_growth_admin_password: "{{ admin_password }}"
+        aap27_inventory_growth_registry_username: "{{ rhsm_username }}"
+        aap27_inventory_growth_registry_password: "{{ rhsm_password }}"
+
+    - name: Stat the prepared inventory-growth file
+      ansible.builtin.stat:
+        path: "{{ installer_inventory_file }}"
+      register: installer_inventory_file_stat
+
+    - name: Slurp the prepared inventory-growth file (if present)
+      ansible.builtin.slurp:
+        path: "{{ installer_inventory_file }}"
+      register: installer_inventory_file_content
+      when: installer_inventory_file_stat.stat.exists | default(false)
+
+    - name: Default managed pg_admin_password match to empty (inventory-growth absent)
+      ansible.builtin.set_fact:
+        installer_inventory_pg_admin_password_match: []
+      no_log: true
+
+    - name: Isolate the pg_admin_password line from inventory-growth (if present)
+      ansible.builtin.set_fact:
+        installer_inventory_pg_admin_password_line: >-
+          {{ (installer_inventory_file_content.content | b64decode).split('\n') | select('match', '^\s*pg_admin_password\s*=') | list | first | default('', true) }}
+      when: installer_inventory_file_content is defined and installer_inventory_file_content.content is defined
+      no_log: true
+
+    - name: Extract managed pg_admin_password match from inventory-growth (if present)
+      ansible.builtin.set_fact:
+        installer_inventory_pg_admin_password_match: >-
+          {{ installer_inventory_pg_admin_password_line | regex_search("pg_admin_password\s*=\s*['\"]?([^'\"\n]+)['\"]?", '\1') | default([], true) }}
+      when: installer_inventory_pg_admin_password_line is defined and installer_inventory_pg_admin_password_line | length > 0
+
+    - name: Set managed pg_admin_password from inventory-growth match (if present)
+      ansible.builtin.set_fact:
+        installer_inventory_pg_admin_password: "{{ installer_inventory_pg_admin_password_match | first | default('', true) }}"
+      no_log: true
 
     - name: Validate requested execution playbook
       ansible.builtin.assert:
@@ -127,6 +296,221 @@
       ansible.builtin.set_fact:
         remote_user_uid: "{{ aap27_rootless_podman_uid }}"
 
+    - name: Configure HTTP to HTTPS redirect
+      ansible.builtin.include_role:
+        name: aap27_http_redirect
+      vars:
+        aap27_http_redirect_user: "{{ platform_admin_user }}"
+        aap27_http_redirect_home: "{{ platform_admin_home }}"
+        aap27_http_redirect_fallback_host: "{{ target_fqdn }}"
+      when: execution_playbook == 'install'
+
+    - name: Prefer environment fallback for postgresql_admin_password
+      ansible.builtin.set_fact:
+        postgresql_admin_password: "{{ lookup('env','POSTGRESQL_ADMIN_PASSWORD') }}"
+      when: lookup('env','POSTGRESQL_ADMIN_PASSWORD') != ''
+
+    - name: Stat installer node env file
+      ansible.builtin.stat:
+        path: "{{ platform_admin_home }}/.ansible/conf/env.yml"
+      register: remote_env_file_stat
+
+    - name: Slurp installer node env.yml (if present)
+      ansible.builtin.slurp:
+        path: "{{ platform_admin_home }}/.ansible/conf/env.yml"
+      register: remote_env_file_content
+      when: remote_env_file_stat.stat.exists | default(false)
+
+    - name: Parse installer node env.yml into dict
+      ansible.builtin.set_fact:
+        remote_installer_env: "{{ (remote_env_file_content.content | b64decode | from_yaml) if (remote_env_file_content is defined and remote_env_file_content.content is defined) else {} }}"
+      no_log: true
+
+    - name: Compute missing required secrets for nested installer
+      ansible.builtin.set_fact:
+        required_secrets: >-
+          {{ [
+               'controller_admin_password',
+               'controller_pg_password',
+               'hub_admin_password',
+               'hub_pg_password',
+               'eda_admin_password',
+               'eda_pg_password'
+             ] | difference( ((nested_forward_vars | default({})).keys() | list) + (remote_installer_env.keys() | list) ) }}
+      no_log: true
+
+    - name: Fail early if we're non-interactive and secrets are missing
+      ansible.builtin.fail:
+        msg: >-
+          Missing required secrets on installer node: {{ required_secrets }}. Run with
+          interactive_prompt=true to prompt locally, or supply via -e/Job Template Survey.
+      when: required_secrets | length > 0 and not (interactive_prompt | default(false))
+
+    - name: When interactive, prompt locally for each missing secret
+      vars:
+        prompt_list: "{{ required_secrets }}"
+      block:
+        - name: Prompt for secret (local)
+          ansible.builtin.pause:
+            prompt: "Enter value for {{ item }} (will be stored on installer node)"
+          register: pause_results
+          loop: "{{ prompt_list }}"
+          loop_control:
+            loop_var: item
+
+        - name: Export pause results to prompted_* variables
+          ansible.builtin.set_fact: "{{ { ('prompted_' + item.item): item.user_input } }}"
+          loop: "{{ pause_results.results | default([]) }}"
+          loop_control:
+            loop_var: item
+      when: (interactive_prompt | default(false)) | bool
+      no_log: true
+
+    - name: Collect prompted secrets into dict
+      ansible.builtin.set_fact:
+        prompted_secrets: >-
+          {{ dict( (required_secrets | default([])) | zip( required_secrets | map('regex_replace','^(.*)$','prompted_\\1') | map('extract', vars) ) ) }}
+      when: (interactive_prompt | default(false)) | bool
+      no_log: true
+
+    - name: Merge prompted_secrets into nested_forward_vars
+      ansible.builtin.set_fact:
+        nested_forward_vars: "{{ nested_forward_vars | default({}) | combine(prompted_secrets | default({}), recursive=True) }}"
+      when: prompted_secrets is defined
+      no_log: true
+
+    - name: Ensure installer node ~/.ansible/bin directory exists
+      ansible.builtin.file:
+        path: "{{ platform_admin_home }}/.ansible/bin"
+        state: directory
+        mode: '0700'
+        owner: "{{ platform_admin_user }}"
+        group: "{{ platform_admin_group | default(platform_admin_user) }}"
+      no_log: true
+
+    - name: Create remote prompt helper script for non-interactive remote prompting
+      ansible.builtin.copy:
+        dest: "{{ platform_admin_home }}/.ansible/bin/remote_prompt_and_write_env.sh"
+        mode: '0700'
+        owner: "{{ platform_admin_user }}"
+        group: "{{ platform_admin_group | default(platform_admin_user) }}"
+        content: |
+          #!/bin/sh
+          set -euo pipefail
+          ENVFILE="${HOME}/.ansible/conf/env.yml"
+          TMPFILE="${ENVFILE}.$$".tmp
+          mkdir -p "$(dirname "$ENVFILE")"
+          umask 077
+          # ensure target exists so grep works
+          if [ ! -f "$ENVFILE" ]; then
+            touch "$ENVFILE"
+            chmod 600 "$ENVFILE"
+          fi
+          cp -f "$ENVFILE" "$TMPFILE"
+          for key in "$@"; do
+            # If key already present, skip
+            if grep -q -E "^${key}:" "$ENVFILE"; then
+              continue
+            fi
+            # Prompt only if we have a tty
+            if [ -t 0 ]; then
+              printf "Enter value for %s: " "$key" >&2
+              stty -echo
+              read val || true
+              stty echo
+              printf "\n" >&2
+            else
+              echo "Missing tty to prompt for ${key}" >&2
+              rm -f "$TMPFILE"
+              exit 2
+            fi
+            # Safely escape single quotes and emit a single-quoted YAML scalar
+            esc=$(printf "%s" "$val" | sed "s/'/'\\''/g")
+            printf "%s: '%s'\n" "$key" "$esc" >> "$TMPFILE"
+          done
+          # Atomic move into place with strict perms
+          chmod 600 "$TMPFILE"
+          mv "$TMPFILE" "$ENVFILE"
+          chmod 600 "$ENVFILE"
+      become: true
+      become_user: "{{ platform_admin_user }}"
+      no_log: true
+
+    - name: Run remote prompt helper when installer node can prompt interactively
+      ansible.builtin.command:
+        argv: ["/bin/sh", "-c", "{{ platform_admin_home }}/.ansible/bin/remote_prompt_and_write_env.sh {{ required_secrets | join(' ') }}"]
+      become: true
+      become_user: "{{ platform_admin_user }}"
+      when: required_secrets | length > 0 and not (interactive_prompt | default(false))
+      register: remote_helper_result
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    - name: Detect remote helper missing-TTY condition
+      ansible.builtin.set_fact:
+        remote_helper_no_tty: >-
+          {{ (remote_helper_result is defined) and (
+             (remote_helper_result.get('rc', None) == 2) or
+             ("Missing tty to prompt" in (remote_helper_result.get('stderr', '') | default('')))
+          ) }}
+      when: remote_helper_result is defined
+      no_log: true
+
+    - name: Fallback to local interactive prompting when remote helper lacked a TTY
+      block:
+        - name: Inform operator of remote helper fallback
+          ansible.builtin.debug:
+            msg: >-
+              Remote prompt helper could not prompt on the installer node (no TTY).
+              Falling back to local interactive prompts to collect missing secrets.
+
+        - name: Prompt for missing secrets locally (fallback)
+          vars:
+            prompt_list: "{{ required_secrets }}"
+          block:
+            - name: Prompt for secret (fallback)
+              ansible.builtin.pause:
+                prompt: "Enter value for {{ item }} (will be stored on installer node)"
+              register: pause_results_fallback
+              loop: "{{ prompt_list }}"
+              loop_control:
+                loop_var: item
+
+            - name: Export pause results to prompted_* variables (fallback)
+              ansible.builtin.set_fact: "{{ { ('prompted_' + item.item): item.user_input } }}"
+              loop: "{{ pause_results_fallback.results | default([]) }}"
+              loop_control:
+                loop_var: item
+        - name: Collect prompted secrets into dict (fallback)
+          ansible.builtin.set_fact:
+            prompted_secrets: >-
+              {{ dict( (required_secrets | default([])) | zip( required_secrets | map('regex_replace','^(.*)$','prompted_\\1') | map('extract', vars) ) ) }}
+          no_log: true
+
+        - name: Merge prompted_secrets into nested_forward_vars (fallback)
+          ansible.builtin.set_fact:
+            nested_forward_vars: "{{ nested_forward_vars | default({}) | combine(prompted_secrets | default({}), recursive=True) }}"
+          no_log: true
+      when: remote_helper_no_tty | default(false)
+
+    - name: Re-read installer node env.yml after prompting (if any)
+      ansible.builtin.stat:
+        path: "{{ platform_admin_home }}/.ansible/conf/env.yml"
+      register: remote_env_file_stat_after
+      when: required_secrets | length > 0
+
+    - name: Slurp installer node env.yml (after helper or fallback)
+      ansible.builtin.slurp:
+        path: "{{ platform_admin_home }}/.ansible/conf/env.yml"
+      register: remote_env_file_content_after
+      when: remote_env_file_stat_after.stat.exists | default(false)
+
+    - name: Parse installer node env.yml into dict (after helper/fallback)
+      ansible.builtin.set_fact:
+        remote_installer_env: "{{ (remote_env_file_content_after.content | b64decode | from_yaml) if (remote_env_file_content_after is defined and remote_env_file_content_after.content is defined) else (remote_installer_env | default({})) }}"
+      no_log: true
+
     - name: Build nested forward variables from hostvars
       ansible.builtin.set_fact:
         nested_forward_vars: "{{ nested_forward_vars | default({}) | combine({item.key: item.value}) }}"
@@ -134,54 +518,220 @@
       when: item.key is match('(_password$|_host$|_user$|^registry_auth$|^redis_|^controller_|^hub_|^eda_|^automationmetrics_|^postgresql_)')
       no_log: true
 
+    - name: Merge remote installer env into nested_forward_vars when keys missing
+      ansible.builtin.set_fact:
+        nested_forward_vars: "{{ nested_forward_vars | default({}) | combine({ item.key: item.value }, recursive=True) }}"
+      loop: "{{ (remote_installer_env | default({})) | dict2items }}"
+      when:
+        - remote_installer_env is mapping
+        - item.key not in ((nested_forward_vars | default({})).keys() | list)
+      no_log: true
+
     - name: Ensure sensible defaults for automationmetrics and related vars
       ansible.builtin.set_fact:
         nested_forward_vars: >-
           {{ nested_forward_vars | default({}) | combine({
-            'ansible_become': true,
             'ansible_become_method': 'sudo',
+            'bundle_install': true,
+            'bundle_dir': (installer_bundle_dir ~ '/bundle'),
             'registry_auth': (registry_auth | default(false)),
-            'postgresql_admin_password': (postgresql_admin_password | default(admin_password | default(''))),
+            'postgresql_admin_password': (installer_inventory_pg_admin_password | default(postgresql_admin_password | default(controller_admin_password | default(admin_password | default('changeme'))))),
             'redis_mode': (redis_mode | default('standalone')),
             'redis_cluster': (redis_cluster | default(false)),
             'redis_cluster_mode': (redis_cluster_mode | default(false)),
-            'controller_admin_password': (controller_admin_password | default(admin_password | default(''))),
+            'controller_admin_password': (controller_admin_password | default(admin_password | default('redhat'))),
             'controller_pg_host': (controller_pg_host | default('localhost')),
-            'controller_pg_password': (controller_pg_password | default(controller_admin_password | default(admin_password | default('')))),
-            'hub_admin_password': (hub_admin_password | default('')),
+            'controller_pg_password': (controller_pg_password | default(controller_admin_password | default(admin_password | default('redhat')))),
+            'gateway_admin_password': (gateway_admin_password | default(controller_admin_password | default(admin_password | default('redhat')))),
+            'gateway_pg_host': (gateway_pg_host | default(controller_pg_host | default('localhost'))),
+            'gateway_pg_password': (gateway_pg_password | default(controller_pg_password | default(admin_password | default('redhat')))),
+            'hub_admin_password': (hub_admin_password | default(controller_admin_password | default(admin_password | default('redhat')))),
             'hub_pg_host': (hub_pg_host | default(controller_pg_host | default('localhost'))),
-            'hub_pg_password': (hub_pg_password | default(controller_pg_password | default(admin_password | default('')))),
+            'hub_pg_password': (hub_pg_password | default(controller_pg_password | default(admin_password | default('redhat')))),
             'hub_pg_user': (hub_pg_user | default('postgres')),
-            'eda_admin_password': (eda_admin_password | default(controller_admin_password | default(admin_password | default('')))),
+            'eda_admin_password': (eda_admin_password | default(controller_admin_password | default(admin_password | default('redhat')))),
             'eda_pg_host': (eda_pg_host | default(controller_pg_host | default('localhost'))),
-            'eda_pg_password': (eda_pg_password | default(eda_admin_password | default(controller_pg_password | default(admin_password | default(''))))),
+            'eda_pg_password': (eda_pg_password | default(eda_admin_password | default(controller_pg_password | default(admin_password | default('redhat'))))),
             'eda_pg_user': (eda_pg_user | default('postgres')),
             'automationmetrics_pg_host': (automationmetrics_pg_host | default(controller_pg_host | default('localhost'))),
-            'automationmetrics_pg_password': (automationmetrics_pg_password | default(controller_pg_password | default(admin_password | default('')))),
+            'automationmetrics_pg_password': (automationmetrics_pg_password | default(controller_pg_password | default(admin_password | default('redhat')))),
             'automationmetrics_pg_user': (automationmetrics_pg_user | default('postgres')),
-            'automationmetrics_admin_password': (automationmetrics_admin_password | default(controller_admin_password | default(admin_password | default('')))),
+            'automationmetrics_admin_password': (automationmetrics_admin_password | default(controller_admin_password | default(admin_password | default('redhat')))),
             'automationmetrics_controller_read_pg_host': (automationmetrics_controller_read_pg_host | default(controller_pg_host | default('localhost'))),
             'automationmetrics_controller_read_pg_user': (automationmetrics_controller_read_pg_user | default('postgres')),
             'automationmetrics_controller_read_pg_password': (automationmetrics_controller_read_pg_password | default(controller_pg_password | default(admin_password
-          | default(''))))
+          | default('redhat'))))
           }) }}
       no_log: true
 
-    - name: Write forwarded extra-vars file for nested installer
+    - name: Ensure no forwarded admin/pg password ended up empty (final safety net)
+      ansible.builtin.set_fact:
+        nested_forward_vars: "{{ nested_forward_vars | default({}) | combine({ item: 'redhat' }) }}"
+      loop:
+        - controller_admin_password
+        - controller_pg_password
+        - gateway_admin_password
+        - gateway_pg_password
+        - hub_admin_password
+        - hub_pg_password
+        - eda_admin_password
+        - eda_pg_password
+        - automationmetrics_admin_password
+        - automationmetrics_pg_password
+        - automationmetrics_controller_read_pg_password
+      when: (nested_forward_vars[item] | default('')) | length == 0
+      no_log: true
+
+    - name: Debug forwarded postgresql_admin_password presence (redacted)
+      ansible.builtin.debug:
+        msg: "forwarded.postgresql_admin_password present={{ (nested_forward_vars.postgresql_admin_password | default('')) | length > 0 }}"
+      when: nested_forward_vars is defined
+
+    - name: Inject prompted postgresql_admin_password into nested_forward_vars (if not present)
+      ansible.builtin.set_fact:
+        nested_forward_vars: "{{ nested_forward_vars | default({}) | combine({'postgresql_admin_password': ((nested_forward_vars.postgresql_admin_password | default('')) if ((nested_forward_vars.postgresql_admin_password | default('')) | length > 0) else (postgresql_admin_password | default('redhat')))}) }}"
+      no_log: true
+
+    - name: Write forwarded extra-vars file (atomic tmp write)
       ansible.builtin.copy:
-        dest: "{{ installer_bundle_dir }}/forwarded_extra_vars.yml"
+        dest: "{{ installer_bundle_dir }}/forwarded_extra_vars.yml.tmp"
         content: "{{ nested_forward_vars | default({}) | to_nice_yaml }}\n"
         owner: "{{ platform_admin_user }}"
         group: "{{ platform_admin_user }}"
         mode: "0600"
       no_log: true
 
-    - name: Run selected AAP containerized playbook
-      become: true
-      become_user: "{{ platform_admin_user }}"
+    - name: Atomically move forwarded extra-vars into place
       ansible.builtin.command:
         argv:
-          - ansible-playbook
+          - /bin/mv
+          - "{{ installer_bundle_dir }}/forwarded_extra_vars.yml.tmp"
+          - "{{ installer_bundle_dir }}/forwarded_extra_vars.yml"
+      become: true
+      become_user: root
+      no_log: true
+
+    - name: Ensure forwarded extra-vars ownership and mode
+      ansible.builtin.file:
+        path: "{{ installer_bundle_dir }}/forwarded_extra_vars.yml"
+        owner: "{{ platform_admin_user }}"
+        group: "{{ platform_admin_user }}"
+        mode: "0600"
+      no_log: true
+
+    - name: Ensure remote ~/.ansible/conf exists on installer node
+      ansible.builtin.file:
+        path: "{{ platform_admin_home }}/.ansible"
+        state: directory
+        owner: "{{ platform_admin_user }}"
+        group: "{{ platform_admin_group | default(platform_admin_user) }}"
+        mode: '0700'
+
+    - name: Ensure remote ~/.ansible/conf directory exists on installer node
+      ansible.builtin.file:
+        path: "{{ platform_admin_home }}/.ansible/conf"
+        state: directory
+        owner: "{{ platform_admin_user }}"
+        group: "{{ platform_admin_group | default(platform_admin_user) }}"
+        mode: '0700'
+
+    - name: Write merged env.yml back to installer node
+      ansible.builtin.copy:
+        dest: "{{ platform_admin_home }}/.ansible/conf/env.yml"
+        content: "{{ nested_forward_vars | to_nice_yaml }}"
+        owner: "{{ platform_admin_user }}"
+        mode: "0600"
+      no_log: true
+
+    - name: Verify forwarded_extra_vars.yml contains postgresql_admin_password
+      ansible.builtin.command:
+        argv:
+          - /bin/grep
+          - -E
+          - '^postgresql_admin_password\s*:'
+          - "{{ installer_bundle_dir }}/forwarded_extra_vars.yml"
+      register: forwarded_contains_pg
+      failed_when: false
+      changed_when: false
+
+    - name: Fail if forwarded postgresql_admin_password is empty
+      ansible.builtin.fail:
+        msg: >-
+          forwarded `postgresql_admin_password` is empty. Provide a value via:
+          - environment variable `POSTGRESQL_ADMIN_PASSWORD`,
+          - outer playbook extra-vars `-e postgresql_admin_password=...`, or
+          - Controller Job Template Survey (variable `postgresql_admin_password`).
+      when: (nested_forward_vars.postgresql_admin_password | default('')) | length == 0
+
+    - name: Ensure podman temporary directory ownership for nested installer
+      ansible.builtin.file:
+        path: /var/tmp/podman-admin
+        state: directory
+        owner: "{{ installer_remote_user }}"
+        group: root
+        mode: '1777'
+      become: true
+
+    - name: Create admin-owned podman tempdir for bind-mount
+      ansible.builtin.file:
+        path: "{{ platform_admin_home }}/podman-admin"
+        state: directory
+        owner: "{{ installer_remote_user }}"
+        group: "{{ installer_remote_user }}"
+        mode: '0755'
+      become: true
+
+    - name: Bind-mount admin-owned tempdir onto /var/tmp/podman-admin
+      ansible.builtin.mount:
+        path: /var/tmp/podman-admin
+        src: "{{ platform_admin_home }}/podman-admin"
+        fstype: none
+        opts: bind
+        state: mounted
+      become: true
+
+    - name: Ensure admin AAP base directory exists
+      ansible.builtin.file:
+        path: "{{ platform_admin_home }}/aap"
+        state: directory
+        owner: "{{ installer_remote_user }}"
+        group: "{{ installer_remote_user }}"
+        mode: '0755'
+      become: true
+
+    - name: Ensure admin AAP TLS directory exists
+      ansible.builtin.file:
+        path: "{{ platform_admin_home }}/aap/tls"
+        state: directory
+        owner: "{{ installer_remote_user }}"
+        group: "{{ installer_remote_user }}"
+        mode: '0755'
+      become: true
+
+    - name: Ensure admin AAP TLS extracted directory exists
+      ansible.builtin.file:
+        path: "{{ platform_admin_home }}/aap/tls/extracted"
+        state: directory
+        owner: "{{ installer_remote_user }}"
+        group: "{{ installer_remote_user }}"
+        mode: '0755'
+      become: true
+    
+    - name: Re-ensure TLS extracted directory ownership before nested run
+      ansible.builtin.file:
+        path: "{{ platform_admin_home }}/aap/tls/extracted"
+        state: directory
+        owner: "{{ installer_remote_user }}"
+        group: "{{ installer_remote_user }}"
+        mode: '0755'
+      become: true
+
+    - name: Run selected AAP containerized playbook
+      become: true
+      become_user: "{{ installer_remote_user }}"
+      ansible.builtin.command:
+        argv:
+          - /bin/ansible-playbook
           - -i
           - inventory-growth
           - -c
@@ -193,5 +743,45 @@
           - "ansible.containerized_installer.{{ execution_playbook }}"
       args:
         chdir: "{{ installer_bundle_dir }}"
+      environment:
+        ANSIBLE_COLLECTIONS_PATHS: "{{ installer_bundle_dir }}/collections:{{ lookup('env','ANSIBLE_COLLECTIONS_PATHS') | default('') }}"
       register: install_result
       changed_when: true
+
+    - name: Unmount admin-owned tempdir from /var/tmp/podman-admin
+      ansible.builtin.mount:
+        path: /var/tmp/podman-admin
+        state: unmounted
+      become: true
+
+    - name: Remove admin-owned podman tempdir
+      ansible.builtin.file:
+        path: "{{ platform_admin_home }}/podman-admin"
+        state: absent
+      become: true
+- name: Post-install service restart on controller
+  hosts: controller
+  become: true
+  gather_facts: false
+
+  vars:
+    aap_post_install_restart_services_default:
+      - sshd
+      - podman
+      - podman.socket
+      - podman.service
+    aap_post_install_restart_services: "{{ aap_post_install_restart_services_override | default(aap_post_install_restart_services_default) }}"
+
+  tasks:
+    - name: Gather service facts
+      ansible.builtin.service_facts:
+
+    - name: Restart touched services if present
+      ansible.builtin.systemd:
+        name: "{{ svc }}"
+        state: restarted
+      loop: "{{ aap_post_install_restart_services }}"
+      loop_control:
+        loop_var: svc
+      when: (svc in ansible_facts.services) or ((svc + '.service') in ansible_facts.services)
+      ignore_errors: true

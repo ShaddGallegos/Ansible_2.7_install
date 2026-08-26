@@ -1,0 +1,41 @@
+[defaults]
+inventory = {{ ansible_inventory | default('./inventory.ini') }}
+roles_path = {{ ansible_roles_path | default(lookup('pipe', "find . -type d -name roles -not -path '*/.*' 2>/dev/null | sort | paste -sd: -") | default('./roles', true), true) }}
+host_key_checking = {{ ansible_host_key_checking | default('False') }}
+retry_files_enabled = {{ ansible_retry_files_enabled | default('False') }}
+remote_tmp = {{ ansible_remote_tmp | default('/var/tmp') }}
+stdout_callback = {{ ansible_stdout_callback | default('ansible.builtin.default') }}
+result_format = {{ ansible_result_format | default('yaml') }}
+bin_ansible_callbacks = {{ ansible_bin_callbacks | default('True') }}
+force_color = {{ ansible_force_color | default('True') }}
+nocolor = {{ ansible_nocolor | default('False') }}
+no_target_syslog = {{ ansible_no_target_syslog | default('False') }}
+syslog_facility = {{ ansible_syslog_facility | default('LOG_USER') }}
+deprecation_warnings = {{ ansible_deprecation_warnings | default('False') }}
+
+[ssh_connection]
+pipelining = {{ ansible_pipelining | default('True') }}
+ssh_args = {{ ansible_ssh_args | default('-o ControlMaster=auto -o ControlPersist=60s -o ServerAliveInterval=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ForwardX11=no') }}
+control_path_dir = {{ ansible_control_path_dir | default('/tmp/.ansible-cp') }}
+retries = {{ ansible_ssh_retries | default('3') }}
+
+[galaxy]
+server_list = {{ ansible_galaxy_server_list | default('rh_certified, validated, community_galaxy') }}
+
+[galaxy_server.rh_certified]
+url = {{ galaxy_rh_certified_url | default('https://console.redhat.com/api/automation-hub/content/rh-certified/') }}
+auth_url = {{ galaxy_auth_url | default('https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token') }}
+# token sourced from RH_AH_TOKEN in ~/.ansible/conf/env.yml (loaded via the aap27_defaults role); vaulted var vault_console_redhat_token takes precedence if set
+token = {{ galaxy_token_rh_certified | default(vault_console_redhat_token | default(RH_AH_TOKEN | default(''))) }}
+
+[galaxy_server.validated]
+url = {{ galaxy_validated_url | default('https://console.redhat.com/api/automation-hub/content/validated/') }}
+auth_url = {{ galaxy_auth_url | default('https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token') }}
+# token sourced from RH_AH_TOKEN in ~/.ansible/conf/env.yml (loaded via the aap27_defaults role); vaulted var vault_console_redhat_token takes precedence if set
+token = {{ galaxy_token_validated | default(vault_console_redhat_token | default(RH_AH_TOKEN | default(''))) }}
+
+[galaxy_server.community_galaxy]
+url = {{ galaxy_community_url | default('https://galaxy.ansible.com/') }}
+
+[vault]
+vault_password_file = {{ ansible_vault_password_file | default('~/.ansible/conf/.vaultpass.txt') }}

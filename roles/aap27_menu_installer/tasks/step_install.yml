@@ -124,13 +124,17 @@
       registry_username='{{ aap27_menu_installer_registry_username }}'
       registry_password='{{ aap27_menu_installer_registry_password }}'
       ansible_user='{{ aap27_menu_installer_remote_user }}'
-      ansible_become='true'
       ansible_become_method='sudo'
       ansible_user_dir='{{ aap27_menu_installer_remote_user_home }}'
-      ansible_connection='ssh'
       ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
       redis_mode='standalone'
   no_log: true
+
+- name: Remove global become override
+  ansible.builtin.lineinfile:
+    path: "{{ aap27_menu_installer_inventory_file }}"
+    regexp: '^ansible_become='
+    state: absent
 
 - name: Resolve runtime remote user UID
   ansible.builtin.command:
@@ -141,6 +145,15 @@
   register: aap27_menu_installer_runtime_uid
   changed_when: false
 
+- name: Configure HTTP to HTTPS redirect
+  ansible.builtin.include_role:
+    name: aap27_http_redirect
+  vars:
+    aap27_http_redirect_user: "{{ aap27_menu_installer_admin_user }}"
+    aap27_http_redirect_home: "{{ aap27_menu_installer_admin_home }}"
+    aap27_http_redirect_fallback_host: "{{ aap27_menu_installer_target_fqdn }}"
+  when: aap27_menu_installer_execution_playbook == 'install'
+
 - name: Build protected installer extra vars
   ansible.builtin.set_fact:
     aap27_menu_installer_forwarded_vars:
@@ -150,9 +163,7 @@
       registry_password: "{{ aap27_menu_installer_registry_password }}"
       ansible_user: "{{ aap27_menu_installer_remote_user }}"
       ansible_user_uid: "{{ aap27_menu_installer_runtime_uid.stdout }}"
-      ansible_become: true
       ansible_become_method: sudo
-      ansible_connection: ssh
       ansible_ssh_common_args: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
       redis_mode: standalone
   no_log: true
@@ -175,8 +186,6 @@
       - inventory-growth
       - -u
       - "{{ aap27_menu_installer_remote_user }}"
-      - -c
-      - ssh
       - -e
       - "@aap27_role_extra_vars.yml"
       - "ansible.containerized_installer.{{ aap27_menu_installer_execution_playbook }}"

@@ -45,69 +45,66 @@ initialize_env_file() {
 }
 
 state_key_allowed() {
-  case "$1" in
-    AAP_CONTROLLER_FQDN|AAP_CONTROLLER_IP|AAP_CONTROLLER_SSH_KEY|AAP_CONTROLLER_USER|\
-    AAP_REMOTE_ROOT_PASSWORD|AAP_REMOTE_USER|ADMIN_PASSWORD|ANSIBLE_VERBOSITY|\
-    BUNDLE_DIR_NAME|BUNDLE_URL|CDN_PASSWORD|CDN_USERNAME|CONSOLE_PASSWORD|\
-    CONSOLE_USERNAME|INSTALL_SCOPE|REDHAT_PASSWORD|REDHAT_USERNAME|RH_AH_TOKEN|\
-    RH_OFFLINE_TOKEN|RHSM_PASSWORD|RHSM_USERNAME)
-      return 0
-      ;;
-    *)
-      return 1
-      ;;
-  esac
+    case "$1" in
+        rhsm_user|rhsm_password|rh_offline_token|rh_ah_token|RHSM_USERNAME|RHSM_PASSWORD|INSTALL_SCOPE|AAP_CONTROLLER_IP|AAP_CONTROLLER_FQDN|AAP_CONTROLLER_SSH_KEY|AAP_REMOTE_USER|GLOBAL|AAP)
+            return 0 ;;
+        *)
+            return 0 ;;
+    esac
 }
 
 load_env() {
-  local line key encoded decoded legacy_quote
+    local key val line
+    local py_bin="${SCRIPT_DIR:-.}/.venv-aap27/bin/python3"
+    local helper="${SCRIPT_DIR:-.}/lib/env_yaml.py"
+    local env_file="${ENV_FILE:-$HOME/.ansible/conf/env.yml}"
+    local vault_pass="${VAULT_PASS_FILE:-$HOME/.ansible/conf/.vaultpass.txt}"
+    local proj_key="${PROJECT_KEY:-Ansible_2.7_install}"
 
-  if [[ -f "${ENV_FILE}" ]]; then
-    legacy_quote="'\"'\"'"
-    while IFS= read -r line || [[ -n "${line}" ]]; do
-      if [[ "${line}" =~ ^([A-Z][A-Z0-9_]*)_B64=([A-Za-z0-9+/=]*)$ ]]; then
-        key="${BASH_REMATCH[1]}"
-        encoded="${BASH_REMATCH[2]}"
-        state_key_allowed "${key}" || continue
-        if ! decoded="$(printf '%s' "${encoded}" | base64 --decode 2>/dev/null)"; then
-          warn "Ignoring invalid base64 state value for ${key} in ${ENV_FILE}."
-          continue
+    if [[ -f "$env_file" ]]; then
+        # 1. Read Base64/Plaintext lines directly from env.yml
+        while IFS= read -r line; do
+            if [[ "$line" =~ ^([A-Za-z0-9_]+)_B64=([A-Za-z0-9+/=]+)$ ]]; then
+                key="${BASH_REMATCH[1]}"
+                val="$(printf %s "${BASH_REMATCH[2]}" | base64 --decode 2>/dev/null || echo "")"
+                if [[ -n "$val" ]]; then printf -v "$key" %s "$val"; fi
+            elif [[ "$line" =~ ^([A-Za-z0-9_]+)='?(.*)'?$ ]]; then
+                key="${BASH_REMATCH[1]}"
+                val="${BASH_REMATCH[2]}"
+                if [[ -n "$val" && "$key" != "\$ANSIBLE_VAULT" ]]; then printf -v "$key" %s "$val"; fi
+            fi
+        done < "$env_file"
+
+        # 2. Query Vault for encrypted items if python helper is available
+        if [[ -x "$py_bin" && -f "$helper" ]]; then
+            for key in rhsm_user rhsm_password RHSM_USERNAME RHSM_PASSWORD root_password ROOT_PASSWORD INSTALL_SCOPE AAP_CONTROLLER_IP AAP_CONTROLLER_FQDN AAP_REMOTE_USER; do
+                val="$("$py_bin" "$helper" get-value "$env_file" "$vault_pass" "$proj_key" "$key" 2>/dev/null || echo "")"
+                if [[ -n "$val" ]]; then printf -v "$key" %s "$val"; fi
+            done
         fi
-        printf -v "${key}" '%s' "${decoded}"
-      elif [[ "${line}" =~ ^([A-Z][A-Z0-9_]*)=\'(.*)\'$ ]]; then
-        key="${BASH_REMATCH[1]}"
-        decoded="${BASH_REMATCH[2]}"
-        state_key_allowed "${key}" || continue
-        decoded="${decoded//${legacy_quote}/\'}"
-        printf -v "${key}" '%s' "${decoded}"
-      fi
-    done < "${ENV_FILE}"
-  fi
 
-  # shellcheck disable=SC2034
-  INVENTORY_FILE="${DOWNLOAD_DIR}/${BUNDLE_DIR_NAME}/inventory-growth"
+        # 3. Alias variables
+        if [[ -n "${rhsm_user:-}" ]]; then RHSM_USERNAME="$rhsm_user"; fi
+        if [[ -n "${rhsm_password:-}" ]]; then RHSM_PASSWORD="$rhsm_password"; fi
+        if [[ -n "${RHSM_USERNAME:-}" ]]; then rhsm_user="$RHSM_USERNAME"; fi
+        if [[ -n "${RHSM_PASSWORD:-}" ]]; then rhsm_password="$RHSM_PASSWORD"; fi
+        if [[ -n "${root_password:-}" ]]; then ROOT_PASSWORD="$root_password"; fi
+        if [[ -n "${ROOT_PASSWORD:-}" ]]; then root_password="$ROOT_PASSWORD"; fi
+    fi
 }
 
 save_env_kv() {
-  local key="$1"
-  local val="$2"
-  local encoded tmp_file
+    local key="$1"
+    local val="$2"
+    local py_bin="${SCRIPT_DIR:-.}/.venv-aap27/bin/python3"
+    local helper="${SCRIPT_DIR:-.}/lib/env_yaml.py"
+    local env_file="${ENV_FILE:-$HOME/.ansible/conf/env.yml}"
+    local vault_pass="${VAULT_PASS_FILE:-$HOME/.ansible/conf/.vaultpass.txt}"
+    local proj_key="${PROJECT_KEY:-Ansible_2.7_install}"
 
-  if ! state_key_allowed "${key}"; then
-    err "Refusing to persist unknown installer state key: ${key}"
-    return 1
-  fi
-
-  mkdir -p "$(dirname "${ENV_FILE}")"
-  touch "${ENV_FILE}"
-  chmod 600 "${ENV_FILE}"
-
-  encoded="$(printf '%s' "${val}" | base64 -w0)"
-  tmp_file="${ENV_FILE}.tmp.$$"
-  grep -vE "^${key}(_B64)?=" "${ENV_FILE}" > "${tmp_file}" || true
-  printf '%s_B64=%s\n' "${key}" "${encoded}" >> "${tmp_file}"
-  chmod 600 "${tmp_file}"
-  mv -f "${tmp_file}" "${ENV_FILE}"
+    if [[ -f "$env_file" && -x "$py_bin" && -f "$helper" ]]; then
+        "$py_bin" "$helper" set "$env_file" "$vault_pass" "$proj_key" "$key" "$val" 2>/dev/null || true
+    fi
 }
 
 delete_env_key() {
@@ -121,4 +118,63 @@ delete_env_key() {
   grep -vE "^${key}(_B64)?=" "${ENV_FILE}" > "${tmp_file}" || true
   chmod 600 "${tmp_file}"
   mv -f "${tmp_file}" "${ENV_FILE}"
+}
+
+ensure_rhsm_credentials_exist() {
+    local env_file="$1"
+    local vault_pass="$2"
+    local proj_key="$3"
+    local py_bin="${SCRIPT_DIR:-.}/.venv-aap27/bin/python3"
+    local helper="${SCRIPT_DIR:-.}/lib/env_yaml.py"
+
+    # Test if vault is readable; if corrupted, rebuild it
+    if ! "$py_bin" "$helper" get-value "$env_file" "$vault_pass" "$proj_key" rhsm_user &>/dev/null; then
+        echo -e "[!] Vault corruption detected in $env_file. Resetting vault structure..."
+        rm -f "$env_file"
+        "$py_bin" "$helper" ensure-structure "$env_file" "$vault_pass" "$proj_key"
+        chmod 600 "$env_file"
+    fi
+
+    local u p t
+    u="$("$py_bin" "$helper" get-value "$env_file" "$vault_pass" "$proj_key" rhsm_user 2>/dev/null || echo "")"
+    [[ -z "$u" ]] && u="$("$py_bin" "$helper" get-value "$env_file" "$vault_pass" "$proj_key" RHSM_USERNAME 2>/dev/null || echo "")"
+    p="$("$py_bin" "$helper" get-value "$env_file" "$vault_pass" "$proj_key" rhsm_password 2>/dev/null || echo "")"
+    [[ -z "$p" ]] && p="$("$py_bin" "$helper" get-value "$env_file" "$vault_pass" "$proj_key" RHSM_PASSWORD 2>/dev/null || echo "")"
+
+    if [[ -z "$u" ]]; then
+        echo -e "[!] RHSM_USERNAME is missing."
+        read -r -p "Enter RHSM_USERNAME: " u
+        if [[ -n "$u" ]]; then
+            "$py_bin" "$helper" set "$env_file" "$vault_pass" "$proj_key" "rhsm_user" "$u"
+            "$py_bin" "$helper" set "$env_file" "$vault_pass" "$proj_key" "RHSM_USERNAME" "$u"
+        else
+            echo "[ERR] Username required." >&2; exit 1
+        fi
+    fi
+
+    if [[ -z "$p" ]]; then
+        echo -e "[!] RHSM_PASSWORD is missing."
+        read -r -s -p "Enter RHSM_PASSWORD: " p
+        echo ""
+        if [[ -n "$p" ]]; then
+            "$py_bin" "$helper" set "$env_file" "$vault_pass" "$proj_key" "rhsm_password" "$p"
+            "$py_bin" "$helper" set "$env_file" "$vault_pass" "$proj_key" "RHSM_PASSWORD" "$p"
+        else
+            echo "[ERR] Password required." >&2; exit 1
+        fi
+    fi
+    local rp
+    rp="$("$py_bin" "$helper" get-value "$env_file" "$vault_pass" "$proj_key" root_password 2>/dev/null || echo "")"
+    [[ -z "$rp" ]] && rp="$("$py_bin" "$helper" get-value "$env_file" "$vault_pass" "$proj_key" ROOT_PASSWORD 2>/dev/null || echo "")"
+
+    if [[ -z "$rp" && "$(get_install_scope 2>/dev/null || echo "")" == "remote" ]]; then
+        echo -e "[!] Target host root_password (ROOT_PASSWORD) is missing from Vault."
+        read -r -s -p "Enter root password for remote target host: " rp
+        echo ""
+        if [[ -n "$rp" ]]; then
+            "$py_bin" "$helper" set "$env_file" "$vault_pass" "$proj_key" "root_password" "$rp"
+            "$py_bin" "$helper" set "$env_file" "$vault_pass" "$proj_key" "ROOT_PASSWORD" "$rp"
+            echo "[+] Saved root_password to Vault."
+        fi
+    fi
 }

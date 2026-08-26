@@ -1,0 +1,130 @@
+---
+- name: Validate HTTP redirect settings
+  ansible.builtin.assert:
+    that:
+      - aap27_http_redirect_user | length > 0
+      - aap27_http_redirect_user != 'root'
+      - aap27_http_redirect_home is match('^/')
+      - aap27_http_redirect_port | int > 0
+      - aap27_http_redirect_https_port | int > 0
+      - aap27_http_redirect_fallback_host is match('^[A-Za-z0-9.-]+$')
+
+- name: Resolve HTTP redirect user UID
+  ansible.builtin.command:
+    argv:
+      - id
+      - -u
+      - "{{ aap27_http_redirect_user }}"
+  register: aap27_http_redirect_uid
+  changed_when: false
+
+- name: Read minimum unprivileged port
+  ansible.builtin.slurp:
+    src: /proc/sys/net/ipv4/ip_unprivileged_port_start
+  register: aap27_http_redirect_unprivileged_port
+
+- name: Configure rootless access to the HTTP port
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_unprivileged_port_start
+    value: "{{ aap27_http_redirect_port }}"
+    state: present
+    sysctl_file: /etc/sysctl.d/90-aap27-http-redirect.conf
+    reload: true
+  when:
+    - aap27_http_redirect_configure_unprivileged_port | bool
+    - (aap27_http_redirect_unprivileged_port.content | b64decode | trim | int) > (aap27_http_redirect_port | int)
+
+- name: Read effective minimum unprivileged port
+  ansible.builtin.slurp:
+    src: /proc/sys/net/ipv4/ip_unprivileged_port_start
+  register: aap27_http_redirect_effective_unprivileged_port
+
+- name: Verify rootless access to the HTTP port
+  ansible.builtin.assert:
+    that:
+      - >-
+        (aap27_http_redirect_effective_unprivileged_port.content | b64decode | trim | int)
+        <= (aap27_http_redirect_port | int)
+    fail_msg: >-
+      Rootless user {{ aap27_http_redirect_user }} cannot bind port
+      {{ aap27_http_redirect_port }} because net.ipv4.ip_unprivileged_port_start
+      remains above {{ aap27_http_redirect_port }}.
+
+- name: Create HTTP redirect directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ aap27_http_redirect_user }}"
+    group: "{{ aap27_http_redirect_user }}"
+    mode: "0755"
+  loop:
+    - "{{ aap27_http_redirect_home }}/.local/libexec"
+    - "{{ aap27_http_redirect_home }}/.config/systemd/user"
+
+- name: Install HTTP redirect service script
+  ansible.builtin.copy:
+    src: http_redirect.py
+    dest: "{{ aap27_http_redirect_home }}/.local/libexec/aap27_http_redirect.py"
+    owner: "{{ aap27_http_redirect_user }}"
+    group: "{{ aap27_http_redirect_user }}"
+    mode: "0755"
+  register: aap27_http_redirect_script
+
+- name: Install HTTP redirect user unit
+  ansible.builtin.copy:
+    dest: "{{ aap27_http_redirect_home }}/.config/systemd/user/aap27-http-redirect.service"
+    owner: "{{ aap27_http_redirect_user }}"
+    group: "{{ aap27_http_redirect_user }}"
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Redirect AAP HTTP requests to HTTPS
+      Wants=network-online.target
+      After=network-online.target
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/bin/python3 {{ aap27_http_redirect_home }}/.local/libexec/aap27_http_redirect.py \
+        --port {{ aap27_http_redirect_port }} \
+        --https-port {{ aap27_http_redirect_https_port }} \
+        --fallback-host {{ aap27_http_redirect_fallback_host }}
+      Restart=always
+      RestartSec=2
+      NoNewPrivileges=true
+      PrivateTmp=true
+      ProtectSystem=strict
+      ProtectHome=read-only
+
+      [Install]
+      WantedBy=default.target
+  register: aap27_http_redirect_unit
+
+- name: Enable and start HTTP redirect service
+  become: true
+  become_user: "{{ aap27_http_redirect_user }}"
+  ansible.builtin.systemd_service:
+    name: aap27-http-redirect.service
+    enabled: true
+    state: "{{ 'restarted' if (aap27_http_redirect_script.changed or aap27_http_redirect_unit.changed) else 'started' }}"
+    scope: user
+    daemon_reload: true
+  environment:
+    HOME: "{{ aap27_http_redirect_home }}"
+    XDG_RUNTIME_DIR: "/run/user/{{ aap27_http_redirect_uid.stdout }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ aap27_http_redirect_uid.stdout }}/bus"
+
+- name: Wait for HTTP redirect port
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ aap27_http_redirect_port }}"
+    timeout: 15
+
+- name: Verify HTTP redirects to HTTPS
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ aap27_http_redirect_port }}/"
+    follow_redirects: none
+    status_code: 308
+  register: aap27_http_redirect_response
+  failed_when: >-
+    aap27_http_redirect_response.status != 308 or
+    not (aap27_http_redirect_response.location | default('')).startswith('https://')

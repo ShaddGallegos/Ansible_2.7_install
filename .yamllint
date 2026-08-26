@@ -24,6 +24,5 @@ rules:
 
 ignore: |
   aap_workflow_project/inventory/*.ini*
-  roles/aap27_defaults/vars/env.yml
   roles/aap27_menu_installer/files/collection_patch_candidates/**
   roles/aap27_menu_installer/files/collection_patches/**

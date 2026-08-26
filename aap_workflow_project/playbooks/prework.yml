@@ -1,12 +1,12 @@
 ---
 - name: AAP prework on target host
-  hosts: all
+  hosts: controller
   become: true
   gather_facts: true
 
   vars:
-    disable_firewall_for_install: "{{ disable_firewall_for_install | default(true) }}"
-    set_selinux_permissive_for_install: "{{ set_selinux_permissive_for_install | default(true) }}"
+    prework_disable_firewall: "{{ disable_firewall_for_install | default(false) }}"
+    prework_set_selinux_permissive: "{{ set_selinux_permissive_for_install | default(false) }}"
     effective_registry_username: "{{ rhsm_username | default(registry_username | default('')) }}"
     effective_registry_password: "{{ rhsm_password | default(registry_password | default('')) }}"
     installer_user: "{{ remote_user | default(machine_credential_username | default('admin')) }}"
@@ -14,6 +14,13 @@
     preflight_min_ram_gb: "{{ min_ram_gb | default(16) }}"
     preflight_min_disk_gb: "{{ min_disk_gb | default(40) }}"
     preflight_fail_on_insufficient: "{{ fail_on_insufficient_resources | default(false) }}"
+
+  handlers:
+    - name: Restart SSH service
+      ansible.builtin.systemd_service:
+        name: sshd
+        enabled: true
+        state: restarted
 
   tasks:
     - name: Validate target host resource capacity
@@ -37,12 +44,51 @@
           - curl
           - jq
           - rsync
+          - sshpass
           - podman
           - podman-docker
           - python3
           - python3-pip
         state: present
       when: ansible_os_family == "RedHat"
+
+    - name: Ensure common packages are installed (all distros)
+      ansible.builtin.package:
+        name:
+          - sshpass
+          - podman
+          - podman-docker
+        state: present
+
+    - name: Enable passwordless sudo for installer user
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/99_aap_installer_nopasswd"
+        content: "{{ installer_user }} ALL=(ALL) NOPASSWD: ALL\n"
+        owner: root
+        group: root
+        mode: "0440"
+        validate: 'visudo -cf %s'
+      when: installer_user != 'root'
+
+    - name: Ensure system SSH client configuration directory exists
+      ansible.builtin.file:
+        path: /etc/ssh/ssh_config.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Disable SSH host-key checking for installer workflows
+      ansible.builtin.copy:
+        dest: /etc/ssh/ssh_config.d/90-aap27-no-host-key-checking.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          Host *
+              StrictHostKeyChecking no
+              UserKnownHostsFile /dev/null
+      notify: Restart SSH service
 
     - name: Configure rootless Podman runtime for installer user
       ansible.builtin.include_role:
@@ -58,22 +104,46 @@
         aap27_rootless_podman_registry_username: "{{ effective_registry_username }}"
         aap27_rootless_podman_registry_password: "{{ effective_registry_password }}"
 
+    - name: Ensure podman temporary directory for image loads exists
+      ansible.builtin.file:
+        path: /var/tmp/podman-admin
+        state: directory
+        owner: "{{ installer_user }}"
+        group: root
+        mode: '1777'
+      become: true
+
     - name: Disable firewalld for installation
       ansible.builtin.systemd:
         name: firewalld
         state: stopped
         enabled: false
-      when: disable_firewall_for_install | bool
+      when: prework_disable_firewall | bool
 
     - name: Set runtime SELinux permissive
       ansible.builtin.command: setenforce 0
       changed_when: false
       failed_when: false
-      when: set_selinux_permissive_for_install | bool
+      when: prework_set_selinux_permissive | bool
 
     - name: Set SELinux config permissive
       ansible.builtin.replace:
         path: /etc/selinux/config
         regexp: "^SELINUX=.*"
         replace: "SELINUX=permissive"
-      when: set_selinux_permissive_for_install | bool
+      when: prework_set_selinux_permissive | bool
+
+- name: Ensure `sshpass` on installer (local control host)
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Ensure `sshpass` and podman are installed on installer host
+      ansible.builtin.package:
+        name:
+          - sshpass
+          - podman
+          - podman-docker
+        state: present

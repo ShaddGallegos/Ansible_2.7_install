@@ -1,0 +1,11 @@
+---
+aap27_inventory_growth_file: /home/admin/Downloads/aap-bundle/inventory-growth
+aap27_inventory_growth_target_fqdn: "{{ ansible_fqdn }}"
+aap27_inventory_growth_target_address: "{{ ansible_host | default(aap27_inventory_growth_target_fqdn) }}"
+aap27_inventory_growth_real_hostname: "{{ ansible_hostname }}"
+aap27_inventory_growth_admin_user: admin
+aap27_inventory_growth_admin_home: "/home/{{ aap27_inventory_growth_admin_user }}"
+aap27_inventory_growth_admin_password: ""
+aap27_inventory_growth_registry_username: ""
+aap27_inventory_growth_registry_password: ""
+aap27_inventory_growth_redis_mode: standalone

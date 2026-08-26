@@ -1,6 +1,6 @@
 # Changelog
 
-Notable changes to `aap27_menu_installer.sh` and the surrounding project
+Notable changes to `aap27_installer.sh` and the surrounding project
 structure. Newest first.
 
 ## 2026-08-14
@@ -71,9 +71,9 @@ structure. Newest first.
   `BUNDLE_URL` (different AAP version) is used.
 - Added `preflight_resource_checks()`: CPU/RAM/disk minimums check, run
   locally or over SSH against the remote target.
-- Added full `--non-interactive` support (`ask_value`/`ask_yn` helpers,
-  auto-detected when stdin isn't a tty), so unattended runs no longer hang on
-  `read` prompts.
+- Added automated `--non-interactive` support (`ask_value`/`ask_yn` helpers,
+  auto-detected when stdin isn't a tty), while retaining required prompts for
+  install scope and remote target identity.
 - Replaced executable `source`/`eval` state handling with strict key
   allowlisting, safe legacy parsing, and base64-encoded state writes. The
   one-time remote root password is no longer persisted after bootstrap.

@@ -1,0 +1,4 @@
+---
+aap27_bundle_hotfixes_bundle_dir: /home/admin/Downloads/aap-bundle
+aap27_bundle_hotfixes_controller_user: admin
+platform_admin_home: "/home/{{ aap27_bundle_hotfixes_controller_user }}"

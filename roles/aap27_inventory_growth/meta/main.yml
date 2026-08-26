@@ -1,0 +1,13 @@
+---
+galaxy_info:
+  author: AAP Workflow
+  description: Manage inventory-growth for target-local AAP installation
+  min_ansible_version: "2.15"
+  license: MIT
+  platforms:
+    - name: EL
+      versions:
+        - "9"
+        - "10"
+
+dependencies: []

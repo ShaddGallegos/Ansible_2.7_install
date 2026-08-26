@@ -1,6 +1,6 @@
 ---
 - name: Configure host identity for AAP install
-  hosts: all
+  hosts: controller
   become: true
   gather_facts: true
 
@@ -29,6 +29,7 @@
     - name: Ensure admin user exists
       ansible.builtin.user:
         name: "{{ platform_admin_user }}"
+        home: "{{ platform_admin_home }}"
         shell: /bin/bash
         create_home: true
         state: present

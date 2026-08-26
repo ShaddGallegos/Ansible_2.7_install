@@ -1,0 +1,107 @@
+---
+- name: Validate inventory-growth inputs
+  ansible.builtin.assert:
+    that:
+      - aap27_inventory_growth_file | length > 0
+      - aap27_inventory_growth_target_fqdn | length > 0
+      - aap27_inventory_growth_target_address | length > 0
+      - aap27_inventory_growth_admin_user | length > 0
+      - aap27_inventory_growth_admin_user != 'root'
+    fail_msg: inventory-growth requires a file, target FQDN, and non-root platform admin user.
+
+- name: Check inventory-growth exists
+  ansible.builtin.stat:
+    path: "{{ aap27_inventory_growth_file }}"
+  register: aap27_inventory_growth_stat
+
+- name: Require inventory-growth file
+  ansible.builtin.assert:
+    that:
+      - aap27_inventory_growth_stat.stat.exists
+      - aap27_inventory_growth_stat.stat.isreg
+    fail_msg: "inventory-growth not found at {{ aap27_inventory_growth_file }}"
+
+- name: Preserve original inventory-growth once
+  ansible.builtin.copy:
+    src: "{{ aap27_inventory_growth_file }}"
+    dest: "{{ aap27_inventory_growth_file }}.pre_script.bak"
+    remote_src: true
+    force: false
+    mode: preserve
+
+- name: Replace example hostnames
+  ansible.builtin.replace:
+    path: "{{ aap27_inventory_growth_file }}"
+    regexp: 'aap\.example\.(com|org)'
+    replace: "{{ aap27_inventory_growth_target_fqdn }}"
+
+- name: Normalize component host lines for target-local execution
+  ansible.builtin.replace:
+    path: "{{ aap27_inventory_growth_file }}"
+    regexp: >-
+      ^(?:aap(?:\.[A-Za-z0-9.-]+)?|localhost(?:\.[A-Za-z0-9.-]+)?|{{
+      aap27_inventory_growth_target_address | regex_escape }})(?:[ \t].*)?$
+    replace: >-
+      {{ aap27_inventory_growth_target_fqdn }} ansible_host={{ aap27_inventory_growth_target_address }}
+
+- name: Replace admin password template references
+  ansible.builtin.replace:
+    path: "{{ aap27_inventory_growth_file }}"
+    regexp: '\{\{[ ]*admin_password[ ]*\}\}'
+    replace: "{{ aap27_inventory_growth_admin_password }}"
+  no_log: true
+
+- name: Replace installer password placeholder
+  ansible.builtin.replace:
+    path: "{{ aap27_inventory_growth_file }}"
+    regexp: 'password=<set your own>'
+    replace: "password={{ aap27_inventory_growth_admin_password }}"
+  no_log: true
+
+- name: Enable bundled collections
+  ansible.builtin.replace:
+    path: "{{ aap27_inventory_growth_file }}"
+    regexp: '^collections=false$'
+    replace: collections=true
+
+- name: Ensure all vars section exists
+  ansible.builtin.lineinfile:
+    path: "{{ aap27_inventory_growth_file }}"
+    line: '[all:vars]'
+    state: present
+
+- name: Set managed installer variables
+  ansible.builtin.blockinfile:
+    path: "{{ aap27_inventory_growth_file }}"
+    marker: '# {mark} MANAGED BY AAP27 INVENTORY ROLE'
+    insertafter: '^\[all:vars\]$'
+    block: |
+      admin_password='{{ aap27_inventory_growth_admin_password }}'
+      pg_admin_password='{{ aap27_inventory_growth_admin_password }}'
+      registry_username='{{ aap27_inventory_growth_registry_username }}'
+      registry_password='{{ aap27_inventory_growth_registry_password }}'
+      ansible_user='admin'
+      ansible_user_dir='{{ aap27_inventory_growth_admin_home }}'
+      ansible_become_method='sudo'
+      redis_mode='{{ aap27_inventory_growth_redis_mode }}'
+  no_log: true
+
+- name: Remove stale identity and registry variables after managed block
+  ansible.builtin.replace:
+    path: "{{ aap27_inventory_growth_file }}"
+    after: '^# END MANAGED BY AAP27 INVENTORY ROLE$'
+    regexp: '^(?:registry_username|registry_password|ansible_user)=.*\n?'
+    replace: ''
+  no_log: true
+
+- name: Remove global become override
+  ansible.builtin.lineinfile:
+    path: "{{ aap27_inventory_growth_file }}"
+    regexp: '^ansible_become='
+    state: absent
+
+- name: Remove legacy global connection override
+  ansible.builtin.lineinfile:
+    path: "{{ aap27_inventory_growth_file }}"
+    regexp: '^ansible_connection='
+    state: absent

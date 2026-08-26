@@ -3,6 +3,5 @@ profile: production
 
 exclude_paths:
   - .ansible/
-  - roles/aap27_defaults/vars/env.yml
   - roles/aap27_menu_installer/files/collection_patches/
   - roles/aap27_menu_installer/files/collection_patch_candidates/

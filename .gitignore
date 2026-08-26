@@ -398,6 +398,7 @@ xcuserdata/
 \#*\#
 _httplib2_test_cache/*
 a.out.*
+ansible.cfg
 artifacts/*
 artifacts_user/**
 bin/gstack-global-discover*

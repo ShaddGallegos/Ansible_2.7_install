@@ -1,0 +1,207 @@
+---
+- name: Apply AAP 2.7-4 TLS delegated-local hotfix
+  when: (aap27_bundle_hotfixes_bundle_dir | basename) is search('2\\.7-4(?:-|$)')
+  block:
+    - name: Set TLS task path
+      ansible.builtin.set_fact:
+        aap27_bundle_hotfixes_tls_tasks: >-
+          {{ aap27_bundle_hotfixes_bundle_dir ~
+             '/collections/ansible_collections/ansible/containerized_installer/roles/common/tasks/tls.yml' }}
+
+    - name: Check TLS task file
+      ansible.builtin.stat:
+        path: "{{ aap27_bundle_hotfixes_tls_tasks }}"
+      register: aap27_bundle_hotfixes_tls_stat
+
+    - name: Require expected TLS task file
+      ansible.builtin.assert:
+        that:
+          - aap27_bundle_hotfixes_tls_stat.stat.exists
+          - aap27_bundle_hotfixes_tls_stat.stat.isreg
+        fail_msg: "Expected TLS task file not found: {{ aap27_bundle_hotfixes_tls_tasks }}"
+
+    - name: Read TLS task file
+      ansible.builtin.slurp:
+        src: "{{ aap27_bundle_hotfixes_tls_tasks }}"
+      register: aap27_bundle_hotfixes_tls_content
+
+    - name: Classify known TLS task structures
+      ansible.builtin.set_fact:
+        aap27_bundle_hotfixes_tls_text: "{{ aap27_bundle_hotfixes_tls_content.content | b64decode }}"
+        aap27_bundle_hotfixes_legacy_tls_structure: >-
+          {{
+            'register: _ca_temp' in (aap27_bundle_hotfixes_tls_content.content | b64decode) and
+            '_ca_temp.path' in (aap27_bundle_hotfixes_tls_content.content | b64decode)
+          }}
+        aap27_bundle_hotfixes_modern_tls_structure: >-
+          {{
+            'register: common_ca_temp' in (aap27_bundle_hotfixes_tls_content.content | b64decode) and
+            'common_ca_temp.path' in (aap27_bundle_hotfixes_tls_content.content | b64decode) and
+            'Ensure local temporary directory is writable' in
+            (aap27_bundle_hotfixes_tls_content.content | b64decode)
+          }}
+
+    - name: Validate known TLS task structure
+      ansible.builtin.assert:
+        that:
+          - >-
+            aap27_bundle_hotfixes_legacy_tls_structure | bool or
+            aap27_bundle_hotfixes_modern_tls_structure | bool or
+            'Ensure local temporary directory ownership' in aap27_bundle_hotfixes_tls_text
+        fail_msg: TLS task structure differs from the validated 2.7-4 hotfix pattern.
+
+    - name: Disable privilege escalation for local temp creation
+      ansible.builtin.replace:
+        path: "{{ aap27_bundle_hotfixes_tls_tasks }}"
+        regexp: >-
+          (        - name: Create local temporary directory\n)(?!          become: false\n)
+        replace: |
+          \1          become: false
+
+    - name: Repair legacy malformed local temp creation hotfix
+      ansible.builtin.replace:
+        path: "{{ aap27_bundle_hotfixes_tls_tasks }}"
+        regexp: '          become: false          ansible\.builtin\.tempfile:'
+        replace: "          become: false\n          ansible.builtin.tempfile:"
+
+    - name: Disable privilege escalation for local temp cleanup
+      ansible.builtin.replace:
+        path: "{{ aap27_bundle_hotfixes_tls_tasks }}"
+        regexp: >-
+          (        - name: Remove local temporary directory\n)(?!          become: false\n)
+        replace: |
+          \1          become: false
+
+    - name: Repair legacy malformed local temp cleanup hotfix
+      ansible.builtin.replace:
+        path: "{{ aap27_bundle_hotfixes_tls_tasks }}"
+        regexp: '          become: false          ansible\.builtin\.file:'
+        replace: "          become: false\n          ansible.builtin.file:"
+
+    - name: Remove duplicate local task privilege settings
+      ansible.builtin.replace:
+        path: "{{ aap27_bundle_hotfixes_tls_tasks }}"
+        regexp: '(          become: false\n)(?:          become: false\n)+'
+        replace: '\1'
+
+    - name: Ensure local temp ownership repair task exists
+      ansible.builtin.replace:
+        path: "{{ aap27_bundle_hotfixes_tls_tasks }}"
+        regexp: '(          register: _ca_temp\n          delegate_to: localhost)'
+        replace: |-
+          \1
+
+                  # AAP27 LOCAL TEMP OWNERSHIP HOTFIX
+                  - name: Ensure local temporary directory ownership
+                    become: true
+                    ansible.builtin.file:
+                      path: '{{ "{{" }} _ca_temp.path {{ "}}" }}'
+                      state: directory
+                      owner: "{{ aap27_bundle_hotfixes_controller_user }}"
+                      mode: '0700'
+                    delegate_to: localhost
+      when: >-
+        aap27_bundle_hotfixes_legacy_tls_structure | bool and
+        'AAP27 LOCAL TEMP OWNERSHIP HOTFIX' not in aap27_bundle_hotfixes_tls_text
+
+- name: Apply AAP 2.7-4 rootless podman env hotfix for bundled image load scripts
+  when: (aap27_bundle_hotfixes_bundle_dir | basename) is search('2\\.7-4(?:-|$)')
+  block:
+    - name: Set common tasks path
+      ansible.builtin.set_fact:
+        aap27_bundle_hotfixes_common_tasks: >-
+          {{ aap27_bundle_hotfixes_bundle_dir ~
+             '/collections/ansible_collections/ansible/containerized_installer/roles/common/tasks/main.yml' }}
+
+    - name: Ensure XDG_RUNTIME_DIR and HOME are exported alongside TMPDIR
+      ansible.builtin.replace:
+        path: "{{ aap27_bundle_hotfixes_common_tasks }}"
+        regexp: '(export TMPDIR="\$\{podman_tmpdir\}"\n)(?!export XDG_RUNTIME_DIR=)'
+        replace: |-
+          \1export XDG_RUNTIME_DIR="/run/user/{{ '{{' }} ansible_user_uid {{ '}}' }}"
+          export HOME="{{ '{{' }} ansible_user_dir {{ '}}' }}"
+
+- name: Apply AAP 2.7-4 gateway proxy readiness self-signed cert hotfix
+  when: (aap27_bundle_hotfixes_bundle_dir | basename) is search('2\\.7-4(?:-|$)')
+  block:
+    - name: Set gateway migrate task path
+      ansible.builtin.set_fact:
+        aap27_bundle_hotfixes_gateway_migrate_tasks: >-
+          {{ aap27_bundle_hotfixes_bundle_dir ~
+             '/collections/ansible_collections/ansible/containerized_installer/roles/automationgateway/tasks/migrate.yml' }}
+
+    - name: Relax strict TLS validation on gateway proxy readiness probe
+      ansible.builtin.replace:
+        path: "{{ aap27_bundle_hotfixes_gateway_migrate_tasks }}"
+        regexp: "(- name: Ensure automation gateway proxy is ready\\n  ansible\\.builtin\\.uri:\\n    url: '\\{\\{ _gateway_proxy_url \\}\\}'\\n    validate_certs: )true"
+        replace: '\1false'
+
+- name: Apply AAP 2.7-4 automationeda systemd service-list hotfix
+  when: (aap27_bundle_hotfixes_bundle_dir | basename) is search('2\\.7-4(?:-|$)')
+  block:
+    - name: Set eda systemd task path
+      ansible.builtin.set_fact:
+        aap27_bundle_hotfixes_eda_systemd_tasks: >-
+          {{ aap27_bundle_hotfixes_bundle_dir ~
+             '/collections/ansible_collections/ansible/containerized_installer/roles/automationeda/tasks/systemd.yml' }}
+
+    - name: Slurp eda systemd task file
+      ansible.builtin.slurp:
+        src: "{{ aap27_bundle_hotfixes_eda_systemd_tasks }}"
+      register: aap27_bundle_hotfixes_eda_systemd_content
+
+    - name: Ensure eda systemd task derives its own service list from __containers
+      ansible.builtin.replace:
+        path: "{{ aap27_bundle_hotfixes_eda_systemd_tasks }}"
+        regexp: "^---\\n(?!- name: Set facts for eda systemd services)"
+        replace: |
+          ---
+          - name: Set facts for eda systemd services
+            ansible.builtin.set_fact:
+              __services: "{{ '{{' }} __containers | product(['service']) | map('join', '.') {{ '}}' }}"
+
+      when: >-
+        'Set facts for eda systemd services' not in (aap27_bundle_hotfixes_eda_systemd_content.content | b64decode)
+
+- name: Apply AAP 2.7-4 automationcontroller SECRET_KEY permission hotfix
+  when: (aap27_bundle_hotfixes_bundle_dir | basename) is search('2\\.7-4(?:-|$)')
+  block:
+    - name: Set controller facts task path
+      ansible.builtin.set_fact:
+        aap27_bundle_hotfixes_controller_facts_tasks: >-
+          {{ aap27_bundle_hotfixes_bundle_dir ~
+             '/collections/ansible_collections/ansible/containerized_installer/roles/automationcontroller/tasks/facts.yml' }}
+
+    - name: Relax controller_secret_key mount mode so the awx process can read it
+      ansible.builtin.replace:
+        path: "{{ aap27_bundle_hotfixes_controller_facts_tasks }}"
+        regexp: '(controller_secret_key,target=/etc/tower/SECRET_KEY,mode=)0400(,uid=)'
+        replace: '\g<1>0444\g<2>'
+
+- name: Apply AAP 2.7-4 internal CA trust-bundle hotfix
+  when: (aap27_bundle_hotfixes_bundle_dir | basename) is search('2\\.7-4(?:-|$)')
+  block:
+    - name: Stat internal CA certificate
+      ansible.builtin.stat:
+        path: "{{ platform_admin_home }}/aap/tls/ca.cert"
+      register: aap27_bundle_hotfixes_ca_stat
+
+    - name: Stat extracted TLS trust bundle
+      ansible.builtin.stat:
+        path: "{{ platform_admin_home }}/aap/tls/extracted/pem/tls-ca-bundle.pem"
+      register: aap27_bundle_hotfixes_ca_bundle_stat
+
+    - name: Slurp internal CA certificate
+      ansible.builtin.slurp:
+        src: "{{ platform_admin_home }}/aap/tls/ca.cert"
+      register: aap27_bundle_hotfixes_ca_slurp
+      when: aap27_bundle_hotfixes_ca_stat.stat.exists | default(false)
+
+    - name: Ensure internal CA is present in the extracted trust bundle
+      ansible.builtin.blockinfile:
+        path: "{{ platform_admin_home }}/aap/tls/extracted/pem/tls-ca-bundle.pem"
+        marker: "# {mark} AAP27 INTERNAL CA HOTFIX"
+        block: "{{ aap27_bundle_hotfixes_ca_slurp.content | b64decode }}"
+      when: >-
+        aap27_bundle_hotfixes_ca_stat.stat.exists | default(false) and
+        aap27_bundle_hotfixes_ca_bundle_stat.stat.exists | default(false)

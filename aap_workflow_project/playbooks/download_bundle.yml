@@ -1,6 +1,6 @@
 ---
 - name: Download AAP bundle to target host
-  hosts: all
+  hosts: controller
   become: true
   gather_facts: true
 
@@ -10,6 +10,10 @@
     admin_download_dir: "{{ platform_admin_home }}/Downloads"
     effective_bundle_url: "{{ bundle_url | default(default_bundle_url) }}"
     effective_bundle_file: "{{ bundle_file | default(default_bundle_file) }}"
+    effective_local_bundle_path: "{{ local_bundle_path | default('') }}"
+    effective_rhsm_username: "{{ rhsm_username | default('') }}"
+    effective_rhsm_password: "{{ rhsm_password | default('') }}"
+    remove_bundle_archive_after_extract: "{{ cleanup_bundle_archive | default(true) }}"
 
   tasks:
     - name: Ensure platform download directory exists
@@ -20,13 +24,84 @@
         group: "{{ platform_admin_user }}"
         mode: "0755"
 
-    - name: Download bundle file
+    - name: Check persisted bundle directory marker
+      ansible.builtin.stat:
+        path: "{{ admin_download_dir }}/.aap27_bundle_dir"
+      register: bundle_marker_stat
+
+    - name: Read persisted bundle directory marker
+      ansible.builtin.slurp:
+        src: "{{ admin_download_dir }}/.aap27_bundle_dir"
+      register: bundle_marker_content
+      when: bundle_marker_stat.stat.exists
+
+    - name: Resolve persisted bundle directory
+      ansible.builtin.set_fact:
+        persisted_bundle_root: >-
+          {{ (bundle_marker_content.content | b64decode | trim)
+             if bundle_marker_stat.stat.exists else '' }}
+
+    - name: Check persisted extracted bundle
+      ansible.builtin.stat:
+        path: "{{ admin_download_dir }}/{{ persisted_bundle_root }}/inventory-growth"
+      register: persisted_bundle_inventory
+      when: persisted_bundle_root | length > 0
+
+    - name: Set bundle readiness
+      ansible.builtin.set_fact:
+        bundle_already_ready: >-
+          {{ (persisted_bundle_root | length > 0) and
+             (persisted_bundle_inventory.stat.exists | default(false)) }}
+
+    - name: Copy controller-local bundle to target
+      ansible.builtin.copy:
+        src: "{{ effective_local_bundle_path }}"
+        dest: "{{ admin_download_dir }}/{{ effective_bundle_file }}"
+        mode: "0644"
+        owner: "{{ platform_admin_user }}"
+        group: "{{ platform_admin_user }}"
+      when:
+        - not bundle_already_ready | bool
+        - effective_local_bundle_path | length > 0
+
+    - name: Download bundle file on target
       ansible.builtin.get_url:
         url: "{{ effective_bundle_url }}"
         dest: "{{ admin_download_dir }}/{{ effective_bundle_file }}"
         mode: "0644"
         owner: "{{ platform_admin_user }}"
         group: "{{ platform_admin_user }}"
+        url_username: "{{ effective_rhsm_username if effective_rhsm_username | length > 0 else omit }}"
+        url_password: "{{ effective_rhsm_password if effective_rhsm_password | length > 0 else omit }}"
+        force_basic_auth: "{{ (effective_rhsm_username | length > 0) and (effective_rhsm_password | length > 0) }}"
+      no_log: true
+      when:
+        - not bundle_already_ready | bool
+        - effective_local_bundle_path | length == 0
+
+    - name: Detect bundle archive root directory
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail;
+          tar -tf {{ (admin_download_dir ~ '/' ~ effective_bundle_file) | quote }} |
+          awk -F/ 'NR == 1 { root = $1 } END { print root }'
+        executable: /bin/bash
+      register: detected_bundle_root
+      changed_when: false
+      when: not bundle_already_ready | bool
+
+    - name: Resolve effective bundle root directory
+      ansible.builtin.set_fact:
+        effective_bundle_root: >-
+          {{ persisted_bundle_root if bundle_already_ready | bool
+             else detected_bundle_root.stdout }}
+
+    - name: Validate bundle archive root directory
+      ansible.builtin.assert:
+        that:
+          - effective_bundle_root | length > 0
+          - effective_bundle_root is match('^ansible-automation-platform-containerized-setup-bundle-[A-Za-z0-9._-]+$')
+        fail_msg: The downloaded archive does not contain a recognized AAP setup bundle root directory.
 
     - name: Extract bundle
       ansible.builtin.unarchive:
@@ -35,3 +110,19 @@
         remote_src: true
         owner: "{{ platform_admin_user }}"
         group: "{{ platform_admin_user }}"
+        creates: "{{ admin_download_dir }}/{{ effective_bundle_root }}/inventory-growth"
+      when: not bundle_already_ready | bool
+
+    - name: Persist detected bundle directory for controller workflows
+      ansible.builtin.copy:
+        dest: "{{ admin_download_dir }}/.aap27_bundle_dir"
+        content: "{{ effective_bundle_root }}\n"
+        owner: "{{ platform_admin_user }}"
+        group: "{{ platform_admin_user }}"
+        mode: "0600"
+
+    - name: Remove compressed bundle archive after extraction
+      ansible.builtin.file:
+        path: "{{ admin_download_dir }}/{{ effective_bundle_file }}"
+        state: absent
+      when: remove_bundle_archive_after_extract | bool
