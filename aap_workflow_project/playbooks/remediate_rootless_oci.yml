@@ -5,9 +5,9 @@
   gather_facts: true
   vars:
     # Set this to the same non-root user that runs the installer/script.
-    deployment_user: "{{ admin_user | default('admin') }}"
-    subuid_start: 100000
-    subuid_count: 65536
+    deployment_user: "{{ ADMIN_USER | default('admin') }}"
+    subuid_start: "{{ SUBUID_START | default(100000) }}"
+    subuid_count: "{{ SUBUID_COUNT | default(65536) }}"
 
   tasks:
     - name: Repair rootless Podman runtime and user bus

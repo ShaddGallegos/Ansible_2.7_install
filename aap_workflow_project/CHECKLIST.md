@@ -7,6 +7,9 @@
 - [x] Install playbook validates survey `remote_user` and `machine_credential_username` alignment.
 - [x] Prework configures rootless `podman.socket` for installer user and rootful `podman.socket` for system scope.
 - [x] Prework ensures `DOCKER_HOST` compatibility export in installer user `.bashrc`.
+- [x] Workflow host identity is composed from `AAP_SHORTNAME` and `AAP_DOMAIN_NAME`.
+- [x] RHSM credentials map directly to inventory-growth registry credentials.
+- [x] All workflow playbooks pass `ansible-playbook --syntax-check`.
 
 ## Controller Access
 

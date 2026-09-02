@@ -9,12 +9,12 @@
       ansible.builtin.include_role:
         name: aap27_inventory_growth
       vars:
-        aap27_inventory_growth_file: "{{ inventory_growth_file }}"
-        aap27_inventory_growth_target_fqdn: "{{ target_fqdn }}"
-        aap27_inventory_growth_target_address: "{{ target_address }}"
-        aap27_inventory_growth_real_hostname: "{{ ansible_hostname }}"
-        aap27_inventory_growth_admin_user: "{{ admin_user | default('admin') }}"
-        aap27_inventory_growth_admin_home: "{{ admin_home | default('/home/' ~ (admin_user | default('admin'))) }}"
-        aap27_inventory_growth_admin_password: "{{ admin_password }}"
-        aap27_inventory_growth_registry_username: "{{ rhsm_username | default(registry_username | default('')) }}"
-        aap27_inventory_growth_registry_password: "{{ rhsm_password | default(registry_password | default('')) }}"
+        aap27_inventory_growth_file: "{{ INVENTORY_GROWTH_FILE }}"
+        aap27_inventory_growth_target_fqdn: "{{ AAP_CONTROLLER_FQDN }}"
+        aap27_inventory_growth_target_address: "{{ AAP_CONTROLLER_IP }}"
+        aap27_inventory_growth_real_hostname: "{{ ansible_facts['hostname'] }}"
+        aap27_inventory_growth_admin_user: "{{ ADMIN_USER | default('admin') }}"
+        aap27_inventory_growth_admin_home: "{{ ADMIN_HOME | default('/home/' ~ (ADMIN_USER | default('admin'))) }}"
+        aap27_inventory_growth_admin_password: "{{ ADMIN_PASSWORD | default(INVENTORY_GROWTH_PASSWORD | default('')) }}"
+        aap27_inventory_growth_registry_username: "{{ RHSM_USERNAME }}"
+        aap27_inventory_growth_registry_password: "{{ RHSM_PASSWORD }}"

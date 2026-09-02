@@ -9,6 +9,8 @@
 **/.pytest_cache/
 **/.ruff_cache/
 **/.venv/
+.venv-aap27/
+.venv-aap27-runtime/
 **/__pycache__/
 **/context/
 **/temp/
@@ -1076,3 +1078,13 @@ zdnn.h
 !package.json
 !peg-parser
 scripts/ocm/ocm
+
+# Project-local generated environments stay untracked. These rules must remain
+# after the broad !*.* override above.
+.venv-aap27/
+.venv-aap27-runtime/
+
+# Track the project toolchain configuration only.
+!.vscode/
+.vscode/*
+!.vscode/settings.json

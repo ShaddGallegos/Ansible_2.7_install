@@ -51,12 +51,12 @@ ok() { echo -e "${GRN}[ OK ]${NC} $*"; }
 # selection; all other prompts use configured values or unattended defaults.
 NONINTERACTIVE="${NONINTERACTIVE:-false}"
 
-# Reads a value into $1 interactively, or uses default $3 (or existing env
-# value of $1) without blocking when NONINTERACTIVE=true. Set $4 to true for
+# Reads a value into ${1:-} interactively, or uses default ${3:-} (or existing env
+# value of ${1:-}) without blocking when NONINTERACTIVE=true. Set $4 to true for
 # values that must still be prompted during an automated full install.
 ask_value() {
-  local var_name="$1"
-  local prompt="$2"
+  local var_name="${1:-}"
+  local prompt="${2:-}"
   local default_val="${3:-}"
   local force_prompt="${4:-false}"
   local -n target_ref="${var_name}"
@@ -92,7 +92,7 @@ ask_value() {
 
 # Yes/no confirmation. Returns 0 for yes, 1 for no. default_answer is "y" or "n".
 ask_yn() {
-  local prompt="$1"
+  local prompt="${1:-}"
   local default_answer="${2:-n}"
   local reply
 
@@ -221,8 +221,8 @@ EOF
 }
 
 ensure_public_key_authorized() {
-  local user_name="$1"
-  local pubkey_file="$2"
+  local user_name="${1:-}"
+  local pubkey_file="${2:-}"
   local user_home authorized_keys
 
   user_home="$(getent passwd "${user_name}" | cut -d: -f6 || true)"
@@ -245,7 +245,7 @@ ensure_public_key_authorized() {
 }
 
 ensure_controller_key_authorized_for_user() {
-  local target_user="$1"
+  local target_user="${1:-}"
   local controller_key controller_pubkey controller_user
 
   controller_user="$(get_controller_user)"
@@ -308,15 +308,15 @@ run_rootless_podman_playbook() {
   extra_vars_file="$(mktemp)"
   chmod 600 "${extra_vars_file}"
   jq -n \
-    --arg deployment_user "${target_user}" \
-    --arg registry_username "${registry_user}" \
-    --arg registry_password "${registry_pass}" \
-    --argjson registry_login "${registry_login}" \
+    --arg AAP_REMOTE_USER "${target_user}" \
+    --arg RHSM_USERNAME "${registry_user}" \
+    --arg RHSM_PASSWORD "${registry_pass}" \
+    --argjson REGISTRY_LOGIN "${registry_login}" \
     '{
-      deployment_user: $deployment_user,
-      registry_login: $registry_login,
-      registry_username: $registry_username,
-      registry_password: $registry_password
+      AAP_REMOTE_USER: $AAP_REMOTE_USER,
+      REGISTRY_LOGIN: $REGISTRY_LOGIN,
+      RHSM_USERNAME: $RHSM_USERNAME,
+      RHSM_PASSWORD: $RHSM_PASSWORD
     }' > "${extra_vars_file}"
 
   if ! run_project_playbook "${playbook_file}" "${extra_vars_file}"; then
@@ -330,7 +330,7 @@ run_rootless_podman_playbook() {
 }
 
 patch_containerized_installer_user_bus_task() {
-  local install_dir="$1"
+  local install_dir="${1:-}"
   local patch_root patch_manifest target_root relative_file source_file target_file runtime_tasks_file gateway_containers_file
 
   patch_root="${SCRIPT_DIR}/roles/aap27_menu_installer/files/collection_patches/ansible/containerized_installer"
@@ -391,7 +391,7 @@ patch_containerized_installer_user_bus_task() {
 }
 
 apply_bundle_specific_hotfixes() {
-  local install_dir="$1"
+  local install_dir="${1:-}"
   local tls_tasks tls_structure
 
   [[ "${BUNDLE_DIR_NAME}" == "ansible-automation-platform-containerized-setup-bundle-2.7-4-x86_64" ]] || return 0
@@ -565,11 +565,11 @@ preflight_resource_checks() {
     fi
 
     cpu_count="$(remote_target_exec 'nproc' 2>/dev/null)"
-    ram_kb="$(remote_target_exec "awk '/MemTotal/{print \$2}' /proc/meminfo" 2>/dev/null)"
+    ram_kb="$(remote_target_exec "awk '/MemTotal/{print \${2:-}}' /proc/meminfo" 2>/dev/null)"
     disk_avail_gb="$(remote_target_exec "df -BG / | awk 'NR==2{print \$4}' | tr -d 'G'" 2>/dev/null)"
   else
     cpu_count="$(nproc 2>/dev/null)"
-    ram_kb="$(awk '/MemTotal/{print $2}' /proc/meminfo 2>/dev/null)"
+    ram_kb="$(awk '/MemTotal/{print ${2:-}}' /proc/meminfo 2>/dev/null)"
     disk_avail_gb="$(df -BG / 2>/dev/null | awk 'NR==2{print $4}' | tr -d 'G')"
   fi
 
@@ -612,7 +612,7 @@ preflight_resource_checks() {
 }
 
 show_step_help() {
-  local step="$1"
+  local step="${1:-}"
   clear
   case "$step" in
     2)
@@ -708,7 +708,7 @@ EOF
 Step 9 - Modify inventory-growth
 --------------------------------
 - Updates:
-  aap.example.test -> ansible_host=<target-address> ansible_user=<platform-admin-user> ansible_ssh_private_key_file=<controller-key>
+  <shortname>.<domain_name> -> ansible_host=<target-address> ansible_user=<platform-admin-user> ansible_ssh_private_key_file=<controller-key>
   password=<set your own> -> password={{ admin_password }}
   collections=false -> collections=true
 - Ensures [all:vars] includes admin/postgres/registry values.
@@ -742,8 +742,8 @@ EOF
 }
 
 read_secret_prompt() {
-  local var_name="$1"
-  local prompt="$2"
+  local var_name="${1:-}"
+  local prompt="${2:-}"
   local force_prompt="${3:-false}"
   local value
 
@@ -768,8 +768,8 @@ read_secret_prompt() {
 }
 
 run_remote_prework() {
-  local disable_firewall="$1"
-  local set_selinux_permissive="$2"
+  local disable_firewall="${1:-}"
+  local set_selinux_permissive="${2:-}"
   local remote_vars_file
 
   if [[ "${TARGET_REACHABLE}" != "true" ]]; then
@@ -780,18 +780,19 @@ run_remote_prework() {
   remote_vars_file="$(mktemp)"
   chmod 600 "${remote_vars_file}"
   jq -n \
-    --arg remote_user "${ADMIN_USER}" \
-    --arg registry_username "${RHSM_USERNAME:-}" \
-    --arg registry_password "${RHSM_PASSWORD:-}" \
-    --argjson disable_firewall_for_install "${disable_firewall}" \
-    --argjson set_selinux_permissive_for_install "${set_selinux_permissive}" \
+    --arg AAP_REMOTE_USER "${ADMIN_USER}" \
+    --arg MACHINE_CREDENTIAL_USERNAME "${ADMIN_USER}" \
+    --arg RHSM_USERNAME "${RHSM_USERNAME:-}" \
+    --arg RHSM_PASSWORD "${RHSM_PASSWORD:-}" \
+    --argjson DISABLE_FIREWALL_FOR_INSTALL "${disable_firewall}" \
+    --argjson SET_SELINUX_PERMISSIVE_FOR_INSTALL "${set_selinux_permissive}" \
     '{
-      remote_user: $remote_user,
-      machine_credential_username: $remote_user,
-      registry_username: $registry_username,
-      registry_password: $registry_password,
-      disable_firewall_for_install: $disable_firewall_for_install,
-      set_selinux_permissive_for_install: $set_selinux_permissive_for_install
+      AAP_REMOTE_USER: $AAP_REMOTE_USER,
+      MACHINE_CREDENTIAL_USERNAME: $MACHINE_CREDENTIAL_USERNAME,
+      RHSM_USERNAME: $RHSM_USERNAME,
+      RHSM_PASSWORD: $RHSM_PASSWORD,
+      DISABLE_FIREWALL_FOR_INSTALL: $DISABLE_FIREWALL_FOR_INSTALL,
+      SET_SELINUX_PERMISSIVE_FOR_INSTALL: $SET_SELINUX_PERMISSIVE_FOR_INSTALL
     }' > "${remote_vars_file}"
 
   if ! run_project_playbook \
@@ -816,16 +817,15 @@ run_remote_host_identity() {
   remote_vars_file="$(mktemp)"
   chmod 600 "${remote_vars_file}"
   jq -n \
-    --arg target_fqdn "${TARGET_FQDN}" \
-    --arg admin_user "${ADMIN_USER}" \
-    --arg admin_home "${ADMIN_HOME}" \
-    --arg admin_password "${ADMIN_PASSWORD:-}" \
+    --arg AAP_CONTROLLER_FQDN "${TARGET_FQDN}" \
+    --arg ADMIN_USER "${ADMIN_USER}" \
+    --arg ADMIN_HOME "${ADMIN_HOME}" \
+    --arg ADMIN_PASSWORD "${ADMIN_PASSWORD:-}" \
     '{
-      target_fqdn: $target_fqdn,
-      default_fqdn: $target_fqdn,
-      admin_user: $admin_user,
-      admin_home: $admin_home,
-      admin_password: $admin_password
+      AAP_CONTROLLER_FQDN: $AAP_CONTROLLER_FQDN,
+      ADMIN_USER: $ADMIN_USER,
+      ADMIN_HOME: $ADMIN_HOME,
+      ADMIN_PASSWORD: $ADMIN_PASSWORD
     }' > "${remote_vars_file}"
 
   if ! run_project_playbook \
@@ -934,7 +934,7 @@ EOF
 }
 
 set_fqdn_and_hosts() {
-  local current_fqdn current_domain target_fqdn target_domain system_ip hosts_alias
+  local current_fqdn current_domain AAP_CONTROLLER_FQDN target_domain system_ip hosts_alias
 
   load_env
   resolve_target_context
@@ -951,31 +951,31 @@ set_fqdn_and_hosts() {
   log "Detected domain: ${current_domain:-<not-set>}"
 
   if [[ -z "${current_fqdn}" || "${current_fqdn}" == "localhost" || "${current_fqdn}" == "localhost.localdomain" ]]; then
-    target_fqdn=""
-    ask_value target_fqdn "Enter target system FQDN (example: aap.example.com)" || return 1
-    if [[ -z "${target_fqdn}" ]]; then
+    AAP_CONTROLLER_FQDN=""
+    ask_value AAP_CONTROLLER_FQDN "Enter target system FQDN (<shortname>.<domain_name>)" || return 1
+    if [[ -z "${AAP_CONTROLLER_FQDN}" ]]; then
       err "FQDN is required."
       return 1
     fi
   else
     if ask_yn "Use detected FQDN '${current_fqdn}'? [Y/n]:" "y"; then
-      target_fqdn="${current_fqdn}"
+      AAP_CONTROLLER_FQDN="${current_fqdn}"
     else
-      target_fqdn=""
-      ask_value target_fqdn "Enter target system FQDN" || return 1
-      if [[ -z "${target_fqdn}" ]]; then
+      AAP_CONTROLLER_FQDN=""
+      ask_value AAP_CONTROLLER_FQDN "Enter target system FQDN" || return 1
+      if [[ -z "${AAP_CONTROLLER_FQDN}" ]]; then
         err "FQDN is required."
         return 1
       fi
     fi
   fi
 
-  target_domain="${target_fqdn#*.}"
-  if [[ "${target_domain}" == "${target_fqdn}" ]]; then
+  target_domain="${AAP_CONTROLLER_FQDN#*.}"
+  if [[ "${target_domain}" == "${AAP_CONTROLLER_FQDN}" ]]; then
     target_domain=""
   fi
 
-  system_ip="$(hostname -I | awk '{print $1}')"
+  system_ip="$(hostname -I | awk '{print ${1:-}}')"
   if [[ -z "${system_ip}" ]]; then
     err "Unable to determine system IP for /etc/hosts update."
     return 1
@@ -990,8 +990,8 @@ set_fqdn_and_hosts() {
 
   cat <<EOF
 Planned host identity changes:
-- hostnamectl set-hostname ${target_fqdn}
-- /etc/hosts entry ensured: ${system_ip} ${target_fqdn}${hosts_alias}
+- hostnamectl set-hostname ${AAP_CONTROLLER_FQDN}
+- /etc/hosts entry ensured: ${system_ip} ${AAP_CONTROLLER_FQDN}${hosts_alias}
 - domain value to apply: ${target_domain:-<none>}
 EOF
   if ! ask_yn "Apply these host identity changes? [y/N]:" "n"; then
@@ -999,7 +999,7 @@ EOF
     return 0
   fi
 
-  run_privileged hostnamectl set-hostname "${target_fqdn}"
+  run_privileged hostnamectl set-hostname "${AAP_CONTROLLER_FQDN}"
 
   if [[ -n "${target_domain}" ]]; then
     if command -v domainname >/dev/null 2>&1; then
@@ -1016,14 +1016,14 @@ EOF
     warn "No domain component detected in FQDN; domain-specific updates skipped."
   fi
 
-  run_privileged sed -i "/[[:space:]]${target_fqdn//./\\.}[[:space:]]/d" /etc/hosts || true
+  run_privileged sed -i "/[[:space:]]${AAP_CONTROLLER_FQDN//./\\.}[[:space:]]/d" /etc/hosts || true
   # Always drop any stray 'aap' alias on this host; re-add it only if this
   # host is actually the AAP node (local scope). Prevents a leftover local
   # 'aap' alias from shadowing the real remote target's hostname.
   run_privileged sed -i "/[[:space:]]aap$/d" /etc/hosts || true
-  printf '%s %s%s\n' "${system_ip}" "${target_fqdn}" "${hosts_alias}" | run_privileged tee -a /etc/hosts >/dev/null
+  printf '%s %s%s\n' "${system_ip}" "${AAP_CONTROLLER_FQDN}" "${hosts_alias}" | run_privileged tee -a /etc/hosts >/dev/null
 
-  ok "Host identity updated. FQDN=${target_fqdn}, domain=${target_domain:-<unset>}."
+  ok "Host identity updated. FQDN=${AAP_CONTROLLER_FQDN}, domain=${target_domain:-<unset>}."
 }
 
 provision_remote_admin_via_ssh() {
@@ -1171,7 +1171,7 @@ REMOTE
     return 1
   fi
   delete_env_key "AAP_REMOTE_ROOT_PASSWORD"
-  unset AAP_REMOTE_ROOT_PASSWORD root_password
+  unset AAP_REMOTE_ROOT_PASSWORD ROOT_PASSWORD
   save_env_kv "AAP_CONTROLLER_SSH_KEY" "${local_key}"
   ok "Remote admin user and SSH key authorized on ${ADMIN_USER}@${remote_host}."
 }
@@ -1252,88 +1252,6 @@ setup_admin_user() {
   ok "admin user setup complete."
 }
 
-capture_credentials() {
-  local rhsm_user rhsm_pass offline_token hub_token bundle_url
-
-  load_env
-
-  cat <<'EOF'
-Credential key synopsis:
-- RHSM_USERNAME:
-  Red Hat account username (email or username).
-  Same credentials are commonly used for Red Hat Login, CDN, registry.redhat.io, and console.redhat.com.
-- RHSM_PASSWORD:
-  Password for the same Red Hat account above.
-- RH_OFFLINE_TOKEN:
-  Offline/API token from access.redhat.com.
-- RH_AH_TOKEN:
-  Token from console.redhat.com for Remote Automation Hub access.
-
-Reference links for account and token retrieval:
-- Red Hat Login registration:
-  https://www.redhat.com/wapps/ugc/register.html?_flowId=register-flow&_flowExecutionKey=e1s1
-- Red Hat offline token:
-  https://access.redhat.com/management/api
-- Red Hat Remote Automation Hub token:
-  https://console.redhat.com/ansible/automation-hub/token
-EOF
-
-  if [[ -n "${RHSM_USERNAME:-}" ]]; then
-    rhsm_user="${RHSM_USERNAME}"
-    log "Reusing saved RHSM username from ${ENV_FILE}."
-  else
-    rhsm_user=""
-    ask_value rhsm_user "Enter RHSM_USERNAME (Red Hat Login/CDN/registry/console username)" "${DEFAULT_RHSM_USERNAME}" || return 1
-  fi
-
-  if [[ -n "${RHSM_PASSWORD:-}" ]]; then
-    rhsm_pass="${RHSM_PASSWORD}"
-    log "Reusing saved RHSM password from ${ENV_FILE}."
-  else
-    read_secret_prompt rhsm_pass "Enter RHSM_PASSWORD (Red Hat Login/CDN/registry/console password)" || return 1
-  fi
-
-  if [[ -n "${RH_OFFLINE_TOKEN:-}" ]]; then
-    offline_token="${RH_OFFLINE_TOKEN}"
-    log "Reusing saved offline token from ${ENV_FILE}."
-  else
-    read_secret_prompt offline_token "Enter RH_OFFLINE_TOKEN (from access.redhat.com)" || return 1
-  fi
-
-  if [[ -n "${RH_AH_TOKEN:-}" ]]; then
-    hub_token="${RH_AH_TOKEN}"
-    log "Reusing saved Remote Automation Hub token from ${ENV_FILE}."
-  else
-    read_secret_prompt hub_token "Enter RH_AH_TOKEN (Remote Automation Hub token)" || return 1
-  fi
-
-  if [[ -n "${BUNDLE_URL:-}" ]]; then
-    bundle_url="${BUNDLE_URL}"
-    log "Reusing saved bundle URL from ${ENV_FILE}."
-  elif [[ "${NONINTERACTIVE}" == "true" ]]; then
-    bundle_url=""
-    log "Non-interactive: using default bundle URL."
-  else
-    read -r -p "Bundle URL [ENTER for default]: " bundle_url
-  fi
-
-  save_env_kv "RHSM_USERNAME" "${rhsm_user}"
-  save_env_kv "RHSM_PASSWORD" "${rhsm_pass}"
-  save_env_kv "CDN_USERNAME" "${rhsm_user}"
-  save_env_kv "CDN_PASSWORD" "${rhsm_pass}"
-  save_env_kv "REDHAT_USERNAME" "${rhsm_user}"
-  save_env_kv "REDHAT_PASSWORD" "${rhsm_pass}"
-  save_env_kv "CONSOLE_USERNAME" "${rhsm_user}"
-  save_env_kv "CONSOLE_PASSWORD" "${rhsm_pass}"
-  save_env_kv "RH_OFFLINE_TOKEN" "${offline_token}"
-  save_env_kv "RH_AH_TOKEN" "${hub_token}"
-  save_env_kv "BUNDLE_URL" "${bundle_url:-$BUNDLE_URL_DEFAULT}"
-
-  run_rootless_podman_playbook "${ADMIN_USER}" true "${rhsm_user}" "${rhsm_pass}"
-
-  ok "Credentials and tokens ensured in ${ENV_FILE} (mode 600)."
-}
-
 download_bundle() {
   local retry_depth="${1:-0}"
   load_env
@@ -1353,21 +1271,21 @@ download_bundle() {
     remote_vars_file="$(mktemp)"
     chmod 600 "${remote_vars_file}"
     jq -n \
-      --arg admin_user "${ADMIN_USER}" \
-      --arg admin_home "${ADMIN_HOME}" \
-      --arg bundle_url "${bundle_url}" \
-      --arg bundle_file "${BUNDLE_FILE}" \
-      --arg local_bundle_path "${local_bundle_source}" \
-      --arg rhsm_username "${RHSM_USERNAME:-}" \
-      --arg rhsm_password "${RHSM_PASSWORD:-}" \
+      --arg ADMIN_USER "${ADMIN_USER}" \
+      --arg ADMIN_HOME "${ADMIN_HOME}" \
+      --arg BUNDLE_URL "${bundle_url}" \
+      --arg BUNDLE_FILE "${BUNDLE_FILE}" \
+      --arg LOCAL_BUNDLE_PATH "${local_bundle_source}" \
+      --arg RHSM_USERNAME "${RHSM_USERNAME:-}" \
+      --arg RHSM_PASSWORD "${RHSM_PASSWORD:-}" \
       '{
-        admin_user: $admin_user,
-        admin_home: $admin_home,
-        bundle_url: $bundle_url,
-        bundle_file: $bundle_file,
-        local_bundle_path: $local_bundle_path,
-        rhsm_username: $rhsm_username,
-        rhsm_password: $rhsm_password
+        ADMIN_USER: $ADMIN_USER,
+        ADMIN_HOME: $ADMIN_HOME,
+        BUNDLE_URL: $BUNDLE_URL,
+        BUNDLE_FILE: $BUNDLE_FILE,
+        LOCAL_BUNDLE_PATH: $LOCAL_BUNDLE_PATH,
+        RHSM_USERNAME: $RHSM_USERNAME,
+        RHSM_PASSWORD: $RHSM_PASSWORD
       }' > "${remote_vars_file}"
 
     if ! run_project_playbook \
@@ -1492,9 +1410,12 @@ download_bundle() {
       return 1
     fi
 
-    read -r -p "Enter local path to a valid AAP bundle tar.gz (or press ENTER to abort): " local_bundle_path
+    read -r -p "Enter local path to a valid AAP bundle tar.gz [${LOCAL_BUNDLE_PATH:-none}]: " local_bundle_path
+    local_bundle_path="${local_bundle_path:-${LOCAL_BUNDLE_PATH:-}}"
     if [[ -n "${local_bundle_path}" && -f "${local_bundle_path}" ]]; then
       if tar -tzf "${local_bundle_path}" >/dev/null 2>&1 || tar -tf "${local_bundle_path}" >/dev/null 2>&1; then
+        LOCAL_BUNDLE_PATH="${local_bundle_path}"
+        save_env_kv "LOCAL_BUNDLE_PATH" "${LOCAL_BUNDLE_PATH}"
         cp -f "${local_bundle_path}" "${DOWNLOAD_DIR}/${BUNDLE_FILE}"
         if id "${controller_user}" >/dev/null 2>&1; then
           chown "${controller_user}:${controller_user}" "${DOWNLOAD_DIR}/${BUNDLE_FILE}" 2>/dev/null || true
@@ -1587,16 +1508,16 @@ extract_bundle() {
 }
 
 ensure_all_vars_section() {
-  local file="$1"
+  local file="${1:-}"
   if ! grep -q '^\[all:vars\]' "${file}"; then
     printf '\n[all:vars]\n' >> "${file}"
   fi
 }
 
 upsert_inventory_var() {
-  local file="$1"
-  local key="$2"
-  local value="$3"
+  local file="${1:-}"
+  local key="${2:-}"
+  local value="${3:-}"
 
   if grep -qE "^${key}=" "${file}"; then
     sed -i "s|^${key}=.*|${key}='${value//\'/\'\"\'\"\'}'|" "${file}"
@@ -1610,12 +1531,12 @@ upsert_inventory_var() {
 }
 
 inventory_baseline_path() {
-  local file="$1"
+  local file="${1:-}"
   printf '%s.pre_script.bak' "${file}"
 }
 
 ensure_inventory_baseline_backup() {
-  local file="$1"
+  local file="${1:-}"
   local baseline
 
   if [[ ! -f "${file}" ]]; then
@@ -1632,7 +1553,7 @@ ensure_inventory_baseline_backup() {
 }
 
 run_post_uninstall_cleanup() {
-  local install_dir="$1"
+  local install_dir="${1:-}"
   local inv_file baseline purge_reply purge_downloads
 
   inv_file="${install_dir}/inventory-growth"
@@ -1693,20 +1614,6 @@ should_run_post_uninstall_cleanup() {
   [[ "${reply:-N}" =~ ^[Yy]$ ]]
 }
 
-ensure_registry_credentials() {
-  load_env
-
-  if [[ -z "${RHSM_USERNAME:-}" ]]; then
-    ask_value RHSM_USERNAME "Enter RHSM_USERNAME (Red Hat Login/CDN/registry/console username)" "${DEFAULT_RHSM_USERNAME}" || return 1
-    save_env_kv "RHSM_USERNAME" "${RHSM_USERNAME}"
-  fi
-
-  if [[ -z "${RHSM_PASSWORD:-}" ]]; then
-    read_secret_prompt RHSM_PASSWORD "Enter RHSM_PASSWORD (Red Hat Login/CDN/registry/console password)" || return 1
-    save_env_kv "RHSM_PASSWORD" "${RHSM_PASSWORD}"
-  fi
-}
-
 # shellcheck source=lib/target.sh
 source "${SCRIPT_DIR}/lib/target.sh"
 
@@ -1725,25 +1632,23 @@ modify_inventory_growth() {
     remote_vars_file="$(mktemp)"
     chmod 600 "${remote_vars_file}"
     jq -n \
-      --arg inventory_growth_file "${remote_inventory_file}" \
-      --arg target_fqdn "${TARGET_FQDN}" \
-      --arg target_address "${TARGET_HOST}" \
-      --arg admin_user "${ADMIN_USER}" \
-      --arg admin_home "${ADMIN_HOME}" \
-      --arg admin_password "${admin_password}" \
-      --arg registry_username "${RHSM_USERNAME:-}" \
-      --arg registry_password "${RHSM_PASSWORD:-}" \
+      --arg INVENTORY_GROWTH_FILE "${remote_inventory_file}" \
+      --arg AAP_CONTROLLER_FQDN "${TARGET_FQDN}" \
+      --arg AAP_CONTROLLER_IP "${TARGET_HOST}" \
+      --arg ADMIN_USER "${ADMIN_USER}" \
+      --arg ADMIN_HOME "${ADMIN_HOME}" \
+      --arg ADMIN_PASSWORD "${admin_password}" \
+      --arg RHSM_USERNAME "${RHSM_USERNAME:-}" \
+      --arg RHSM_PASSWORD "${RHSM_PASSWORD:-}" \
       '{
-        inventory_growth_file: $inventory_growth_file,
-        target_fqdn: $target_fqdn,
-        target_address: $target_address,
-        admin_user: $admin_user,
-        admin_home: $admin_home,
-        admin_password: $admin_password,
-        rhsm_username: $registry_username,
-        rhsm_password: $registry_password,
-        registry_username: $registry_username,
-        registry_password: $registry_password
+        INVENTORY_GROWTH_FILE: $INVENTORY_GROWTH_FILE,
+        AAP_CONTROLLER_FQDN: $AAP_CONTROLLER_FQDN,
+        AAP_CONTROLLER_IP: $AAP_CONTROLLER_IP,
+        ADMIN_USER: $ADMIN_USER,
+        ADMIN_HOME: $ADMIN_HOME,
+        ADMIN_PASSWORD: $ADMIN_PASSWORD,
+        RHSM_USERNAME: $RHSM_USERNAME,
+        RHSM_PASSWORD: $RHSM_PASSWORD
       }' > "${remote_vars_file}"
 
     if ! run_project_playbook \
@@ -1811,7 +1716,7 @@ modify_inventory_growth() {
 }
 
 enforce_inventory_runtime_settings() {
-  local inv_file="$1"
+  local inv_file="${1:-}"
   local target_domain host_line controller_user controller_home known_hosts_file escaped_admin_password
   ensure_registry_credentials
   load_env
@@ -1868,8 +1773,8 @@ enforce_inventory_runtime_settings() {
 }
 
 get_inventory_var() {
-  local inv_file="$1"
-  local key="$2"
+  local inv_file="${1:-}"
+  local key="${2:-}"
   local raw
 
   raw="$(grep -E "^${key}=" "${inv_file}" | tail -n1 | cut -d= -f2- || true)"
@@ -1879,7 +1784,7 @@ get_inventory_var() {
 }
 
 cleanup_old_ansible_logs() {
-  local install_dir="$1"
+  local install_dir="${1:-}"
   local remote_bundle_dir="${2:-}"
   local remote_cleanup_command
 
@@ -1920,20 +1825,20 @@ cleanup_old_ansible_logs() {
 }
 
 configure_http_redirect_service() {
-  local redirect_vars target_fqdn
+  local redirect_vars AAP_CONTROLLER_FQDN
 
   load_env
-  target_fqdn="$(get_install_target_fqdn)"
+  AAP_CONTROLLER_FQDN="$(get_install_target_fqdn)"
   redirect_vars="$(mktemp)"
   chmod 600 "${redirect_vars}"
   jq -n \
-    --arg admin_user "${ADMIN_USER}" \
-    --arg admin_home "${ADMIN_HOME}" \
-    --arg default_fqdn "${target_fqdn}" \
+    --arg ADMIN_USER "${ADMIN_USER}" \
+    --arg ADMIN_HOME "${ADMIN_HOME}" \
+    --arg AAP_CONTROLLER_FQDN "${AAP_CONTROLLER_FQDN}" \
     '{
-      admin_user: $admin_user,
-      admin_home: $admin_home,
-      default_fqdn: $default_fqdn
+      ADMIN_USER: $ADMIN_USER,
+      ADMIN_HOME: $ADMIN_HOME,
+      AAP_CONTROLLER_FQDN: $AAP_CONTROLLER_FQDN
     }' > "${redirect_vars}"
 
   if ! run_project_playbook \
@@ -1948,50 +1853,8 @@ configure_http_redirect_service() {
   ok "HTTP requests now redirect to the AAP HTTPS gateway."
 }
 
-# Ensures the containerized installer's required admin/postgres secrets are
-# set before we invoke ansible-playbook, prompting even in --non-interactive
-# mode (force_prompt=true) since these have no safe default and the nested
-# installer run cannot prompt over a non-TTY connection. Values are persisted
-# to ENV_FILE so subsequent runs don't re-prompt.
-ensure_installer_secrets() {
-  load_env
-
-  if [[ -z "${CONTROLLER_ADMIN_PASSWORD:-}" ]]; then
-    read_secret_prompt CONTROLLER_ADMIN_PASSWORD "Enter controller_admin_password (AAP Controller admin password)" true || return 1
-    save_env_kv "CONTROLLER_ADMIN_PASSWORD" "${CONTROLLER_ADMIN_PASSWORD}"
-  fi
-  if [[ -z "${CONTROLLER_PG_PASSWORD:-}" ]]; then
-    read_secret_prompt CONTROLLER_PG_PASSWORD "Enter controller_pg_password (Controller database password)" true || return 1
-    save_env_kv "CONTROLLER_PG_PASSWORD" "${CONTROLLER_PG_PASSWORD}"
-  fi
-  if [[ -z "${HUB_ADMIN_PASSWORD:-}" ]]; then
-    read_secret_prompt HUB_ADMIN_PASSWORD "Enter hub_admin_password (Automation Hub admin password)" true || return 1
-    save_env_kv "HUB_ADMIN_PASSWORD" "${HUB_ADMIN_PASSWORD}"
-  fi
-  if [[ -z "${HUB_PG_PASSWORD:-}" ]]; then
-    read_secret_prompt HUB_PG_PASSWORD "Enter hub_pg_password (Hub database password)" true || return 1
-    save_env_kv "HUB_PG_PASSWORD" "${HUB_PG_PASSWORD}"
-  fi
-  if [[ -z "${EDA_ADMIN_PASSWORD:-}" ]]; then
-    read_secret_prompt EDA_ADMIN_PASSWORD "Enter eda_admin_password (EDA admin password)" true || return 1
-    save_env_kv "EDA_ADMIN_PASSWORD" "${EDA_ADMIN_PASSWORD}"
-  fi
-  if [[ -z "${EDA_PG_PASSWORD:-}" ]]; then
-    read_secret_prompt EDA_PG_PASSWORD "Enter eda_pg_password (EDA database password)" true || return 1
-    save_env_kv "EDA_PG_PASSWORD" "${EDA_PG_PASSWORD}"
-  fi
-  if [[ -z "${POSTGRESQL_ADMIN_PASSWORD:-}" ]]; then
-    ask_value POSTGRESQL_ADMIN_PASSWORD "Enter postgresql_admin_password (shared PostgreSQL admin password)" "redhat" true || return 1
-    save_env_kv "POSTGRESQL_ADMIN_PASSWORD" "${POSTGRESQL_ADMIN_PASSWORD}"
-  fi
-  if [[ -z "${GATEWAY_ADMIN_PASSWORD:-}" ]]; then
-    ask_value GATEWAY_ADMIN_PASSWORD "Enter gateway_admin_password (Automation Gateway admin password)" "${CONTROLLER_ADMIN_PASSWORD:-redhat}" true || return 1
-    save_env_kv "GATEWAY_ADMIN_PASSWORD" "${GATEWAY_ADMIN_PASSWORD}"
-  fi
-}
-
 run_execution_playbook() {
-  local playbook_name="$1"
+  local playbook_name="${1:-}"
   local install_dir
   local runtime_host_line runtime_user runtime_become runtime_conn runtime_redis_mode remote_user remote_uid controller_user controller_home controller_key
   local runtime_extra_vars
@@ -2023,47 +1886,51 @@ run_execution_playbook() {
     remote_workflow_vars="$(mktemp)"
     chmod 600 "${remote_workflow_vars}"
     jq -n \
-      --arg bundle_dir "${remote_bundle_dir}" \
-      --arg default_fqdn "${TARGET_FQDN}" \
-      --arg remote_user "${remote_user}" \
-      --arg machine_credential_username "${remote_user}" \
-      --arg admin_user "${ADMIN_USER}" \
-      --arg admin_home "${ADMIN_HOME}" \
-      --arg admin_password "${ADMIN_PASSWORD:-}" \
-      --arg rhsm_username "${RHSM_USERNAME:-}" \
-      --arg rhsm_password "${RHSM_PASSWORD:-}" \
-      --arg registry_username "${RHSM_USERNAME:-}" \
-      --arg registry_password "${RHSM_PASSWORD:-}" \
-      --arg execution_playbook "${playbook_name}" \
-      --arg controller_admin_password "${CONTROLLER_ADMIN_PASSWORD:-}" \
-      --arg controller_pg_password "${CONTROLLER_PG_PASSWORD:-}" \
-      --arg hub_admin_password "${HUB_ADMIN_PASSWORD:-}" \
-      --arg hub_pg_password "${HUB_PG_PASSWORD:-}" \
-      --arg eda_admin_password "${EDA_ADMIN_PASSWORD:-}" \
-      --arg eda_pg_password "${EDA_PG_PASSWORD:-}" \
-      --arg postgresql_admin_password "${POSTGRESQL_ADMIN_PASSWORD:-}" \
-      --arg gateway_admin_password "${GATEWAY_ADMIN_PASSWORD:-}" \
+      --arg BUNDLE_DIR "${remote_bundle_dir}" \
+      --arg AAP_CONTROLLER_IP "${TARGET_HOST}" \
+      --arg AAP_REMOTE_USER "${remote_user}" \
+      --arg MACHINE_CREDENTIAL_USERNAME "${remote_user}" \
+      --arg ADMIN_USER "${ADMIN_USER}" \
+      --arg ADMIN_HOME "${ADMIN_HOME}" \
+      --arg ADMIN_PASSWORD "${ADMIN_PASSWORD:-}" \
+      --arg RHSM_USERNAME "${RHSM_USERNAME:-}" \
+      --arg RHSM_PASSWORD "${RHSM_PASSWORD:-}" \
+      --arg AAP_EXECUTION_PLAYBOOK "${playbook_name}" \
+      --arg CONTROLLER_ADMIN_PASSWORD "${CONTROLLER_ADMIN_PASSWORD:-}" \
+      --arg CONTROLLER_PG_PASSWORD "${CONTROLLER_PG_PASSWORD:-}" \
+      --arg HUB_ADMIN_PASSWORD "${HUB_ADMIN_PASSWORD:-}" \
+      --arg HUB_PG_PASSWORD "${HUB_PG_PASSWORD:-}" \
+      --arg EDA_ADMIN_PASSWORD "${EDA_ADMIN_PASSWORD:-}" \
+      --arg EDA_PG_PASSWORD "${EDA_PG_PASSWORD:-}" \
+      --arg POSTGRESQL_ADMIN_PASSWORD "${POSTGRESQL_ADMIN_PASSWORD:-}" \
+      --arg GATEWAY_ADMIN_PASSWORD "${GATEWAY_ADMIN_PASSWORD:-}" \
+      --arg GATEWAY_PG_PASSWORD "${GATEWAY_PG_PASSWORD:-}" \
+      --arg AUTOMATIONMETRICS_ADMIN_PASSWORD "${AUTOMATIONMETRICS_ADMIN_PASSWORD:-}" \
+      --arg AUTOMATIONMETRICS_PG_PASSWORD "${AUTOMATIONMETRICS_PG_PASSWORD:-}" \
+      --arg AUTOMATIONMETRICS_CONTROLLER_READ_PG_PASSWORD "${AUTOMATIONMETRICS_CONTROLLER_READ_PG_PASSWORD:-}" \
       '{
-        bundle_dir: $bundle_dir,
-        default_fqdn: $default_fqdn,
-        remote_user: $remote_user,
-        machine_credential_username: $machine_credential_username,
-        admin_user: $admin_user,
-        admin_home: $admin_home,
-        admin_password: $admin_password,
-        rhsm_username: $rhsm_username,
-        rhsm_password: $rhsm_password,
-        registry_username: $registry_username,
-        registry_password: $registry_password,
-        execution_playbook: $execution_playbook,
-        controller_admin_password: $controller_admin_password,
-        controller_pg_password: $controller_pg_password,
-        hub_admin_password: $hub_admin_password,
-        hub_pg_password: $hub_pg_password,
-        eda_admin_password: $eda_admin_password,
-        eda_pg_password: $eda_pg_password,
-        postgresql_admin_password: $postgresql_admin_password,
-        gateway_admin_password: $gateway_admin_password
+        BUNDLE_DIR: $BUNDLE_DIR,
+        AAP_CONTROLLER_IP: $AAP_CONTROLLER_IP,
+        AAP_REMOTE_USER: $AAP_REMOTE_USER,
+        MACHINE_CREDENTIAL_USERNAME: $MACHINE_CREDENTIAL_USERNAME,
+        ADMIN_USER: $ADMIN_USER,
+        ADMIN_HOME: $ADMIN_HOME,
+        ADMIN_PASSWORD: $ADMIN_PASSWORD,
+        RHSM_USERNAME: $RHSM_USERNAME,
+        RHSM_PASSWORD: $RHSM_PASSWORD,
+        AAP_EXECUTION_PLAYBOOK: $AAP_EXECUTION_PLAYBOOK,
+        CONTROLLER_ADMIN_PASSWORD: $CONTROLLER_ADMIN_PASSWORD,
+        CONTROLLER_PG_PASSWORD: $CONTROLLER_PG_PASSWORD,
+        HUB_ADMIN_PASSWORD: $HUB_ADMIN_PASSWORD,
+        HUB_PG_PASSWORD: $HUB_PG_PASSWORD,
+        EDA_ADMIN_PASSWORD: $EDA_ADMIN_PASSWORD,
+        EDA_PG_PASSWORD: $EDA_PG_PASSWORD,
+        POSTGRESQL_ADMIN_PASSWORD: $POSTGRESQL_ADMIN_PASSWORD,
+        GATEWAY_ADMIN_PASSWORD: $GATEWAY_ADMIN_PASSWORD,
+        GATEWAY_PG_PASSWORD: $GATEWAY_PG_PASSWORD,
+        AUTOMATIONMETRICS_ADMIN_PASSWORD: $AUTOMATIONMETRICS_ADMIN_PASSWORD,
+        AUTOMATIONMETRICS_PG_PASSWORD: $AUTOMATIONMETRICS_PG_PASSWORD,
+        AUTOMATIONMETRICS_CONTROLLER_READ_PG_PASSWORD: $AUTOMATIONMETRICS_CONTROLLER_READ_PG_PASSWORD
       }' > "${remote_workflow_vars}"
 
     if ! run_project_playbook \
@@ -2138,6 +2005,11 @@ run_execution_playbook() {
     --arg eda_admin_password "${EDA_ADMIN_PASSWORD:-}" \
     --arg eda_pg_password "${EDA_PG_PASSWORD:-}" \
     --arg postgresql_admin_password "${POSTGRESQL_ADMIN_PASSWORD:-}" \
+    --arg gateway_admin_password "${GATEWAY_ADMIN_PASSWORD:-}" \
+    --arg gateway_pg_password "${GATEWAY_PG_PASSWORD:-}" \
+    --arg automationmetrics_admin_password "${AUTOMATIONMETRICS_ADMIN_PASSWORD:-}" \
+    --arg automationmetrics_pg_password "${AUTOMATIONMETRICS_PG_PASSWORD:-}" \
+    --arg automationmetrics_controller_read_pg_password "${AUTOMATIONMETRICS_CONTROLLER_READ_PG_PASSWORD:-}" \
     '{
       ansible_user: $ansible_user,
       ansible_user_uid: $ansible_user_uid,
@@ -2151,7 +2023,12 @@ run_execution_playbook() {
       hub_pg_password: $hub_pg_password,
       eda_admin_password: $eda_admin_password,
       eda_pg_password: $eda_pg_password,
-      postgresql_admin_password: $postgresql_admin_password
+      postgresql_admin_password: $postgresql_admin_password,
+      gateway_admin_password: $gateway_admin_password,
+      gateway_pg_password: $gateway_pg_password,
+      automationmetrics_admin_password: $automationmetrics_admin_password,
+      automationmetrics_pg_password: $automationmetrics_pg_password,
+      automationmetrics_controller_read_pg_password: $automationmetrics_controller_read_pg_password
     }' > "${runtime_extra_vars}"
   chmod 600 "${runtime_extra_vars}"
   if id "${controller_user}" >/dev/null 2>&1; then
@@ -2297,57 +2174,8 @@ show_status() {
   pause_enter
 }
 
-run_full_install_step() {
-  local step_number="$1"
-  local description="$2"
-  shift 2
-
-  log "Full install ${step_number}: ${description}"
-  if ! "$@"; then
-    err "Full install failed during step ${step_number}: ${description}."
-    return 1
-  fi
-}
-
-prepare_install_target() {
-  load_env
-  resolve_target_context
-
-  if [[ "${TARGET_SCOPE}" == "remote" ]]; then
-    run_remote_prework true true
-    return $?
-  fi
-
-  prework_packages || return 1
-  disable_firewall_selinux
-}
-
-run_complete_install_pipeline() {
-  run_full_install_step 1 "select installation target" configure_install_scope true || return 1
-  if [[ "$(get_install_scope)" == "remote" ]]; then bootstrap_remote_admin "$(get_install_target_host)"; fi
-    run_full_install_step 2 "bootstrap admin, RHEL repositories, and prerequisite packages" setup_admin_user || return 1
-  run_full_install_step 3 "run dependency and resource preflight checks" preflight_dependency_checks || return 1
-  run_full_install_step 4 "prepare host and relax firewalld/SELinux for installation" prepare_install_target || return 1
-  run_full_install_step 5 "configure target host identity" set_fqdn_and_hosts || return 1
-  run_full_install_step 6 "capture credentials and tokens" capture_credentials || return 1
-  run_full_install_step 7 "download and extract the AAP bundle" download_bundle || return 1
-  run_full_install_step 8 "verify extracted bundle" extract_bundle || return 1
-  run_full_install_step 9 "prepare inventory-growth" modify_inventory_growth || return 1
-  run_full_install_step 10 "run the AAP containerized installer" run_execution_playbook install || return 1
-
-  ok "Ansible Automation Platform full installation pipeline completed."
-}
-
-run_full_install_workflow() {
-  local original_noninteractive workflow_rc
-
-  original_noninteractive="${NONINTERACTIVE}"
-  NONINTERACTIVE=true
-  run_complete_install_pipeline
-  workflow_rc=$?
-  NONINTERACTIVE="${original_noninteractive}"
-  return "${workflow_rc}"
-}
+# shellcheck source=lib/workflow.sh
+source "${SCRIPT_DIR}/lib/workflow.sh"
 
 documentation_menu() {
   local choice document relative_path
@@ -2443,8 +2271,8 @@ install_ansible_automation_platform() {
 }
 
 reconfigure_text_value() {
-  local var_name="$1"
-  local prompt="$2"
+  local var_name="${1:-}"
+  local prompt="${2:-}"
   local fallback="${3:-}"
   local current value
   local -n target_ref="${var_name}"
@@ -2456,8 +2284,8 @@ reconfigure_text_value() {
 }
 
 reconfigure_secret_value() {
-  local var_name="$1"
-  local prompt="$2"
+  local var_name="${1:-}"
+  local prompt="${2:-}"
   local current value
   local -n target_ref="${var_name}"
 
@@ -2638,13 +2466,126 @@ EOF
   done
 }
 
+usage() {
+  cat <<EOF
+AAP 2.7-2 Menu Installer
+Usage: $(basename "$0") [options]
+
+Options:
+  -h, --help                  Show this help message and exit
+  -V, --version               Show version and exit
+  -y, -n, --non-interactive   Run without interactive prompts
+  --local                     Set install scope to local
+  --remote                    Set install scope to remote
+  --scope <local|remote>      Override the install scope
+  --target-host <host>        Set the target host/IP for remote installs
+  --fqdn <hostname>           Set the target FQDN for remote installs
+  --admin-user <name>         Override the admin username
+  --admin-home <path>         Override the admin home directory
+  --bundle-url <url>          Override the bundle download URL
+  --bundle-file <file>        Override the bundle archive filename
+  --ansible-verbosity <n>     Set ansible verbosity (0, 1, 2, 3)
+
+Examples:
+  ./aap27_installer.sh --non-interactive --scope remote
+  ./aap27_installer.sh --local --admin-user admin
+EOF
+}
+
 main() {
-  local arg
-  for arg in "$@"; do
+  local arg index value
+
+  index=1
+  while [[ ${index} -le $# ]]; do
+    arg="${!index}"
     case "${arg}" in
-      --non-interactive|-y) NONINTERACTIVE=true ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      -V|--version)
+        echo "AAP 2.7-2 Menu Installer version 2.7-2"
+        exit 0
+        ;;
+      --non-interactive|-y|-n)
+        NONINTERACTIVE=true
+        ;;
+      --local)
+        INSTALL_SCOPE="local"
+        ;;
+      --remote)
+        INSTALL_SCOPE="remote"
+        ;;
+      --scope)
+        index=$((index + 1))
+        value="${!index:-}"
+        case "${value}" in
+          local|remote)
+            INSTALL_SCOPE="${value}"
+            ;;
+          *)
+            err "Invalid scope '${value}'. Use 'local' or 'remote'."
+            exit 1
+            ;;
+        esac
+        ;;
+      --target-host)
+        index=$((index + 1))
+        value="${!index:-}"
+        [[ -n "${value}" ]] || { err "Missing value for --target-host."; exit 1; }
+        AAP_REMOTE_IP="${value}"
+        AAP_CONTROLLER_IP="${value}"
+        ;;
+      --fqdn)
+        index=$((index + 1))
+        value="${!index:-}"
+        [[ -n "${value}" ]] || { err "Missing value for --fqdn."; exit 1; }
+        AAP_REMOTE_FQDN="${value}"
+        AAP_CONTROLLER_FQDN="${value}"
+        ;;
+      --admin-user)
+        index=$((index + 1))
+        value="${!index:-}"
+        [[ -n "${value}" ]] || { err "Missing value for --admin-user."; exit 1; }
+        ADMIN_USER="${value}"
+        ADMIN_HOME="${ADMIN_HOME:-/home/${ADMIN_USER}}"
+        ;;
+      --admin-home)
+        index=$((index + 1))
+        value="${!index:-}"
+        [[ -n "${value}" ]] || { err "Missing value for --admin-home."; exit 1; }
+        ADMIN_HOME="${value}"
+        ;;
+      --bundle-url)
+        index=$((index + 1))
+        value="${!index:-}"
+        [[ -n "${value}" ]] || { err "Missing value for --bundle-url."; exit 1; }
+        BUNDLE_URL="${value}"
+        ;;
+      --bundle-file)
+        index=$((index + 1))
+        value="${!index:-}"
+        [[ -n "${value}" ]] || { err "Missing value for --bundle-file."; exit 1; }
+        BUNDLE_FILE="${value}"
+        ;;
+      --ansible-verbosity)
+        index=$((index + 1))
+        value="${!index:-}"
+        [[ -n "${value}" ]] || { err "Missing value for --ansible-verbosity."; exit 1; }
+        ANSIBLE_VERBOSITY="${value}"
+        ;;
+      --)
+        break
+        ;;
+      *)
+        warn "Unknown option: ${arg}"
+        usage >&2
+        exit 1
+        ;;
     esac
+    index=$((index + 1))
   done
+
   if [[ "${NONINTERACTIVE}" != "true" && ! -t 0 ]]; then
     NONINTERACTIVE=true
     warn "stdin is not a terminal; forcing non-interactive mode."
@@ -2654,10 +2595,10 @@ main() {
   require_root
   mkdir -p "${DOWNLOAD_DIR}"
   initialize_env_file
-    ensure_rhsm_credentials_exist "$ENV_FILE" "$VAULT_PASS_FILE" "$PROJECT_KEY"
+  ensure_rhsm_credentials_exist "$ENV_FILE" "$VAULT_PASS_FILE" "$PROJECT_KEY"
 
   if [[ "${NONINTERACTIVE}" == "true" ]]; then
-    log "Automated mode: prompting for target selection, then running the full install workflow."
+    log "Automated mode: loading target selection from ${ENV_FILE}, then running the full install workflow."
     run_full_install_workflow
     exit $?
   fi
@@ -2667,111 +2608,55 @@ main() {
 
 initial_install_scope_prompt() {
   local force_prompt="${1:-false}"
-  local choice ctl_ip ctl_fqdn ctl_shorthost ctl_domain saved_fqdn default_shorthost default_domain
-  local install_host inv_dir inv_file local_controller_key
+  local scope_choice=""
+  local short_hostname=""
+  local domain=""
 
-  inv_dir="${SCRIPT_DIR}/aap_workflow_project/inventory"
-  inv_file="${inv_dir}/controller.ini"
+    load_env 2>/dev/null || true
+    local scope="${INSTALL_SCOPE:-remote}"
+    local ip="${AAP_REMOTE_IP:-${AAP_CONTROLLER_IP:-192.168.122.84}}"
+    local fqdn="${AAP_REMOTE_FQDN:-${AAP_CONTROLLER_FQDN:-aap.prod.spg}}"
 
-  mkdir -p "${inv_dir}"
-  load_env
-
-  while true; do
-    if [[ "${NONINTERACTIVE}" == "true" && "${force_prompt}" != "true" ]]; then
-      case "${INSTALL_SCOPE:-}" in
-        remote) choice="2" ;;
-        *) choice="1" ;;
-      esac
-      log "Non-interactive: using install scope option ${choice} (INSTALL_SCOPE=${INSTALL_SCOPE:-local})."
-    else
-      clear
-      cat <<'EOF'
-Installation Mode
-=================
-1) Local (install on this system)
-2) Remote (install on remote controller)
-EOF
-
-      if ! read -r -p "Select option (1/2): " choice; then
-        err "Install scope selection is required."
-        return 1
-      fi
-    fi
-    case "${choice}" in
-      1)
-        log "Selected local install. Inventory set to use localhost."
-        cat > "${inv_file}" <<EOF
-[controller]
-localhost ansible_connection=local
-
-[installhost]
-$(hostname -f 2>/dev/null || hostname) ansible_connection=local
-
-[all:vars]
-ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
-EOF
-        save_env_kv "INSTALL_SCOPE" "local"
-        break
-        ;;
-      2)
-        ctl_ip="${AAP_CONTROLLER_IP:-}"
-        ask_value ctl_ip \
-          "Enter controller IP or hostname [${AAP_CONTROLLER_IP:-required}]" \
-          "${AAP_CONTROLLER_IP:-}" "${force_prompt}" || return 1
-        saved_fqdn="${AAP_CONTROLLER_FQDN:-}"
-        default_shorthost="aap"
-        default_domain="example.com"
-        if [[ -n "${saved_fqdn}" ]]; then
-          default_shorthost="${saved_fqdn%%.*}"
-          if [[ "${saved_fqdn}" == *.* ]]; then
-            default_domain="${saved_fqdn#*.}"
-          fi
-        fi
-        ctl_shorthost=""
-        ask_value ctl_shorthost \
-          "What will the system short hostname be [${default_shorthost}]" \
-          "${default_shorthost}" "${force_prompt}" || return 1
-        ctl_domain=""
-        ask_value ctl_domain \
-          "What is the domain for your machine [${default_domain}]" \
-          "${default_domain}" "${force_prompt}" || return 1
-        ctl_fqdn="${ctl_shorthost}.${ctl_domain}"
-        if [[ -z "${ctl_ip}" && -z "${ctl_fqdn}" ]]; then
-          warn "Controller host is required for remote installs."
-          if [[ "${NONINTERACTIVE}" == "true" ]]; then
-            err "Non-interactive mode: no controller IP available. Set AAP_CONTROLLER_IP in ${ENV_FILE} and re-run."
-            return 1
-          fi
-          continue
-        fi
-        ctl_ip="${ctl_ip:-${ctl_fqdn}}"
-        install_host="$(hostname -f 2>/dev/null || hostname)"
-        # Private key lives on THIS (local/controller) host under the invoking
-        # user's home; admin's account/home is provisioned on the remote target.
-        local_controller_key="${CONTROLLER_STATE_HOME}/.ssh/id_ed25519"
-
-        log "Writing remote inventory to ${inv_file} (controller=${ctl_fqdn}, ansible_host=${ctl_ip})"
-        cat > "${inv_file}" <<EOF
-[controller]
-${ctl_fqdn} ansible_host=${ctl_ip} ansible_user=${ADMIN_USER} ansible_ssh_private_key_file=${local_controller_key}
-
-[installhost]
-${install_host} ansible_connection=local
-
-[all:vars]
-ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
-EOF
-
-        save_env_kv "INSTALL_SCOPE" "remote"
-        save_env_kv "AAP_CONTROLLER_IP" "${ctl_ip}"
-        save_env_kv "AAP_CONTROLLER_FQDN" "${ctl_fqdn}"
-        break
-        ;;
-      *)
-        warn "Invalid option. Please select 1 or 2."
-        ;;
+  if [[ "$force_prompt" == "true" ]]; then
+    printf '\nInstallation Mode\n=================\n1) Local (install on this system)\n2) Remote (install on remote controller)\n'
+    read -r -p "Select option (1/2) [2]: " scope_choice || return 1
+    case "${scope_choice:-2}" in
+      1) scope="local" ;;
+      2) scope="remote" ;;
+      *) err "Invalid installation mode: ${scope_choice}"; return 1 ;;
     esac
-  done
+
+    if [[ "$scope" == "remote" ]]; then
+      read -r -p "Enter controller IP or hostname [${ip}]: " selected_ip || return 1
+      ip="${selected_ip:-$ip}"
+      read -r -p "What will the system short hostname be [${fqdn%%.*}]: " short_hostname || return 1
+      short_hostname="${short_hostname:-${fqdn%%.*}}"
+      read -r -p "What is the domain for your machine [$(derive_domain_from_fqdn "$fqdn")]: " domain || return 1
+      domain="${domain:-$(derive_domain_from_fqdn "$fqdn")}"
+      fqdn="${short_hostname}.${domain}"
+    fi
+  fi
+
+    export INSTALL_SCOPE="$scope"
+    export AAP_REMOTE_IP="$ip"
+    export AAP_CONTROLLER_IP="$ip"
+    export AAP_SHORTNAME="${fqdn%%.*}"
+    AAP_DOMAIN_NAME="$(derive_domain_from_fqdn "$fqdn")"
+    export AAP_DOMAIN_NAME
+    export AAP_REMOTE_FQDN="$fqdn"
+    export AAP_CONTROLLER_FQDN="$fqdn"
+
+    save_env_kv "INSTALL_SCOPE" "$scope"
+    save_env_kv "AAP_REMOTE_IP" "$ip"
+    save_env_kv "AAP_CONTROLLER_IP" "$ip"
+    save_env_kv "AAP_SHORTNAME" "$AAP_SHORTNAME"
+    save_env_kv "AAP_DOMAIN_NAME" "$AAP_DOMAIN_NAME"
+    save_env_kv "AAP_REMOTE_FQDN" "$fqdn"
+    save_env_kv "AAP_CONTROLLER_FQDN" "$fqdn"
+
+    log "[INFO] Using verified target: ${fqdn} (${ip}) Scope: ${scope}"
+    write_remote_inventory "${fqdn}" "${ip}"
+    return 0
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

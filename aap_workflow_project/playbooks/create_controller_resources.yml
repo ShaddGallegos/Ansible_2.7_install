@@ -4,8 +4,31 @@
   gather_facts: false
 
   vars:
-    controller_host: "{{ aap_controller_host }}"
-    controller_validate_certs: "{{ aap_validate_certs }}"
+    controller_host: "{{ AAP_CONTROLLER_HOST }}"
+    controller_validate_certs: "{{ AAP_VALIDATE_CERTS }}"
+    aap_controller_oauthtoken: "{{ AAP_CONTROLLER_OAUTH_TOKEN }}"
+    aap_controller_username: "{{ AAP_CONTROLLER_USERNAME }}"
+    aap_controller_password: "{{ AAP_CONTROLLER_PASSWORD }}"
+    aap_org_name: "{{ AAP_ORG_NAME }}"
+    aap_inventory_name: "{{ AAP_INVENTORY_NAME }}"
+    aap_inventory_description: "{{ AAP_INVENTORY_DESCRIPTION }}"
+    workflow_project_name: "{{ WORKFLOW_PROJECT_NAME }}"
+    workflow_project_url: "{{ WORKFLOW_PROJECT_URL }}"
+    workflow_project_branch: "{{ WORKFLOW_PROJECT_BRANCH }}"
+    machine_credential_name: "{{ MACHINE_CREDENTIAL_NAME }}"
+    registry_credential_name: "{{ REGISTRY_CREDENTIAL_NAME }}"
+    machine_credential_username: "{{ MACHINE_CREDENTIAL_USERNAME }}"
+    machine_credential_password: "{{ MACHINE_CREDENTIAL_PASSWORD }}"
+    registry_username: "{{ REGISTRY_USERNAME | default(RHSM_USERNAME | default('')) }}"
+    registry_password: "{{ REGISTRY_PASSWORD | default(RHSM_PASSWORD | default('')) }}"
+    jt_prework_name: "{{ JOB_TEMPLATE_PREWORK_NAME }}"
+    jt_host_identity_name: "{{ JOB_TEMPLATE_HOST_IDENTITY_NAME }}"
+    jt_download_name: "{{ JOB_TEMPLATE_DOWNLOAD_NAME }}"
+    jt_install_name: "{{ JOB_TEMPLATE_INSTALL_NAME }}"
+    aap_workflow_template_name: "{{ AAP_WORKFLOW_TEMPLATE_NAME }}"
+    default_fqdn: "{{ DEFAULT_FQDN }}"
+    default_bundle_url: "{{ DEFAULT_BUNDLE_URL }}"
+    default_bundle_file: "{{ DEFAULT_BUNDLE_FILE }}"
 
     survey_common:
       name: "AAP 2.7 Install Survey"
@@ -15,53 +38,53 @@
           question_description: "System FQDN for the install node"
           required: true
           type: text
-          variable: target_fqdn
-          default: "{{ default_fqdn }}"
+          variable: AAP_CONTROLLER_FQDN
+          default: "{{ DEFAULT_FQDN }}"
           min: 3
           max: 253
         - question_name: "Admin Password"
           question_description: "Password used for admin and inventory values"
           required: true
           type: password
-          variable: admin_password
+          variable: ADMIN_PASSWORD
           min: 8
           max: 128
         - question_name: "RHSM Username"
           question_description: "Red Hat username"
           required: true
           type: text
-          variable: rhsm_username
-          default: "{{ registry_username }}"
+          variable: RHSM_USERNAME
+          default: "{{ REGISTRY_USERNAME | default(RHSM_USERNAME | default('')) }}"
           min: 1
           max: 128
         - question_name: "RHSM Password"
           question_description: "Red Hat password"
           required: true
           type: password
-          variable: rhsm_password
+          variable: RHSM_PASSWORD
           min: 1
           max: 128
         - question_name: "Bundle URL"
           question_description: "AAP 2.7 bundle URL"
           required: true
           type: text
-          variable: bundle_url
-          default: "{{ default_bundle_url }}"
+          variable: BUNDLE_URL
+          default: "{{ DEFAULT_BUNDLE_URL }}"
           min: 10
           max: 2048
         - question_name: "Bundle File Name"
           question_description: File name under the platform admin user's Downloads directory
           required: true
           type: text
-          variable: bundle_file
-          default: "{{ default_bundle_file }}"
+          variable: BUNDLE_FILE
+          default: "{{ DEFAULT_BUNDLE_FILE }}"
           min: 5
           max: 255
         - question_name: "Execution Playbook"
           question_description: "ansible.containerized_installer playbook to run"
           required: true
           type: multiplechoice
-          variable: execution_playbook
+          variable: AAP_EXECUTION_PLAYBOOK
           default: "install"
           choices: |
             install
@@ -75,17 +98,34 @@
           question_description: "Non-root SSH user for installer execution"
           required: true
           type: text
-          variable: remote_user
-          default: "{{ machine_credential_username }}"
+          variable: AAP_REMOTE_USER
+          default: "{{ MACHINE_CREDENTIAL_USERNAME }}"
           min: 1
           max: 64
 
   tasks:
+    - name: Validate controller resource credentials
+      ansible.builtin.assert:
+        that:
+          - AAP_CONTROLLER_HOST | length > 0
+          - >-
+            (AAP_CONTROLLER_OAUTH_TOKEN | length > 0) or
+            ((AAP_CONTROLLER_USERNAME | length > 0) and
+             (AAP_CONTROLLER_PASSWORD | length > 0))
+          - MACHINE_CREDENTIAL_USERNAME | length > 0
+          - MACHINE_CREDENTIAL_PASSWORD | length > 0
+          - registry_username | length > 0
+          - registry_password | length > 0
+        fail_msg: >-
+          Controller, machine, or registry credentials are missing from the
+          uppercase ANSIBLE_2.7_INSTALL section in ~/.ansible/conf/env.yml.
+      no_log: true
+
     - name: Validate machine credential username is non-root
       ansible.builtin.assert:
         that:
-          - machine_credential_username != 'root'
-        fail_msg: "machine_credential_username must be non-root for containerized installer preflight"
+          - MACHINE_CREDENTIAL_USERNAME != 'root'
+        fail_msg: "MACHINE_CREDENTIAL_USERNAME must be non-root for containerized installer preflight"
 
     - name: Ensure organization exists
       awx.awx.organization:

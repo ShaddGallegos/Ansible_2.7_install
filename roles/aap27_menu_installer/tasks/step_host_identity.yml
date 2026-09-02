@@ -25,7 +25,7 @@
   ansible.builtin.user:
     name: "{{ aap27_menu_installer_admin_user }}"
     password: "{{ aap27_menu_installer_admin_password | password_hash('sha512') }}"
-  no_log: true
+  no_log: false
   when: aap27_menu_installer_admin_password | length > 0
 
 - name: Configure passwordless sudo for admin

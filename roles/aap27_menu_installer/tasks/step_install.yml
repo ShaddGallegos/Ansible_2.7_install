@@ -99,7 +99,7 @@
     path: "{{ aap27_menu_installer_inventory_file }}"
     regexp: "password=<set your own>"
     replace: "password={{ aap27_menu_installer_admin_password }}"
-  no_log: true
+  no_log: false
 
 - name: Enable collections
   ansible.builtin.replace:
@@ -119,7 +119,7 @@
     marker: "# {mark} MANAGED BY AAP27 ROLE"
     insertafter: "^\\[all:vars\\]$"
     block: |
-      admin_password='{{ aap27_menu_installer_admin_password }}'
+      ADMIN_PASSWORD='{{ aap27_menu_installer_admin_password }}'
       pg_admin_password='{{ aap27_menu_installer_admin_password }}'
       registry_username='{{ aap27_menu_installer_registry_username }}'
       registry_password='{{ aap27_menu_installer_registry_password }}'
@@ -128,7 +128,7 @@
       ansible_user_dir='{{ aap27_menu_installer_remote_user_home }}'
       ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
       redis_mode='standalone'
-  no_log: true
+  no_log: false
 
 - name: Remove global become override
   ansible.builtin.lineinfile:
@@ -157,7 +157,7 @@
 - name: Build protected installer extra vars
   ansible.builtin.set_fact:
     aap27_menu_installer_forwarded_vars:
-      admin_password: "{{ aap27_menu_installer_admin_password }}"
+      ADMIN_PASSWORD: "{{ aap27_menu_installer_admin_password }}"
       pg_admin_password: "{{ aap27_menu_installer_admin_password }}"
       registry_username: "{{ aap27_menu_installer_registry_username }}"
       registry_password: "{{ aap27_menu_installer_registry_password }}"
@@ -166,7 +166,7 @@
       ansible_become_method: sudo
       ansible_ssh_common_args: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
       redis_mode: standalone
-  no_log: true
+  no_log: false
 
 - name: Write protected installer extra vars
   ansible.builtin.copy:
@@ -175,7 +175,7 @@
     owner: "{{ aap27_menu_installer_admin_user }}"
     group: "{{ aap27_menu_installer_admin_user }}"
     mode: "0600"
-  no_log: true
+  no_log: false
 
 - name: Build ansible-playbook command list
   ansible.builtin.set_fact:

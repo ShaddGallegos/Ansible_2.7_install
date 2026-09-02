@@ -10,6 +10,10 @@ Use this checklist before running the installer or the AAP workflow project.
 - [x] Menu installer Step 10 now auto-prepares runtime user DBus session and enables `podman.socket` before running `ansible.containerized_installer`.
 - [x] Menu installer Step 1 now auto-checks and auto-installs `podman` when missing (no prompt).
 - [x] Workflow prework now configures both rootless and rootful `podman.socket` plus `DOCKER_HOST` compatibility for the installer user.
+- [x] `~/.ansible/conf/env.yml` is the sole Vault-encrypted installer state source; updates are atomic and retain a mode-`0600` backup.
+- [x] Target identity is derived from `AAP_SHORTNAME` and `AAP_DOMAIN_NAME` (for example, `aap.prod.spg`).
+- [x] Full-install step arguments and failures propagate correctly, including forced target selection and `execution_playbook=install`.
+- [x] Installer regression suite passes without contacting a real target host.
 
 ## Accounts, Tokens, and Credentials
 

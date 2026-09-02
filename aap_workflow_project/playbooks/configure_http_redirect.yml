@@ -5,13 +5,13 @@
   gather_facts: false
 
   vars:
-    platform_admin_user: "{{ admin_user | default('admin') }}"
-    platform_admin_home: "{{ admin_home | default('/home/' ~ platform_admin_user) }}"
-    target_fqdn: "{{ default_fqdn | default('aap.example.com') }}"
+    platform_admin_user: "{{ ADMIN_USER | default('admin') }}"
+    platform_admin_home: "{{ ADMIN_HOME | default('/home/' ~ platform_admin_user) }}"
+    AAP_CONTROLLER_FQDN: "{{ AAP_SHORTNAME | default('aap') }}.{{ AAP_DOMAIN_NAME | default('prod.spg') }}"
 
   roles:
     - role: aap27_http_redirect
       vars:
         aap27_http_redirect_user: "{{ platform_admin_user }}"
         aap27_http_redirect_home: "{{ platform_admin_home }}"
-        aap27_http_redirect_fallback_host: "{{ target_fqdn }}"
+        aap27_http_redirect_fallback_host: "{{ AAP_CONTROLLER_FQDN }}"

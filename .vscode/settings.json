@@ -1,0 +1,5 @@
+{
+  "ansible.ansible.path": "/run/media/sgallego/SD_Card/GIT/Ansible_2.7_install/.venv-aap27/bin/ansible",
+  "ansible.python.interpreterPath": "/run/media/sgallego/SD_Card/GIT/Ansible_2.7_install/.venv-aap27/bin/python3",
+  "ansible.validation.lint.path": "/run/media/sgallego/SD_Card/GIT/Ansible_2.7_install/.venv-aap27/bin/ansible-lint"
+}

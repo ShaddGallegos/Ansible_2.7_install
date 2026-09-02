@@ -3,7 +3,7 @@
   ansible.builtin.include_vars:
     file: "{{ aap27_defaults_env_file }}"
     name: aap27_defaults_env_data
-  no_log: true
+  no_log: false
   when: aap27_defaults_use_local_env | bool
 
 - name: Merge common and project-specific sections into flat facts
@@ -15,5 +15,5 @@
        | combine(aap27_defaults_env_data[aap27_defaults_project_key] | default({})))
       | dict2items
     }}
-  no_log: true
+  no_log: false
   when: aap27_defaults_use_local_env | bool

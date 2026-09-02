@@ -167,6 +167,44 @@
     - aap27_rootless_podman_registry_username | length > 0
     - aap27_rootless_podman_registry_password | length > 0
 
+- name: Ensure rootless Podman auth.json contains registry credentials
+  become: true
+  become_user: "{{ aap27_rootless_podman_user }}"
+  ansible.builtin.file:
+    path: "{{ aap27_rootless_podman_home }}/.config/containers"
+    state: directory
+    owner: "{{ aap27_rootless_podman_user }}"
+    group: "{{ aap27_rootless_podman_user }}"
+    mode: "0700"
+  environment: *rootless_podman_environment
+  when:
+    - aap27_rootless_podman_registry_login | bool
+    - aap27_rootless_podman_registry_username | length > 0
+    - aap27_rootless_podman_registry_password | length > 0
+
+- name: Write podman auth.json for registry (safe, no_log)
+  become: true
+  become_user: "{{ aap27_rootless_podman_user }}"
+  ansible.builtin.copy:
+    dest: "{{ aap27_rootless_podman_home }}/.config/containers/auth.json"
+    content: |
+      {
+        "auths": {
+          "{{ aap27_rootless_podman_registry_host }}": {
+            "auth": "{{ (aap27_rootless_podman_registry_username ~ ':' ~ aap27_rootless_podman_registry_password) | b64encode }}"
+          }
+        }
+      }
+    owner: "{{ aap27_rootless_podman_user }}"
+    group: "{{ aap27_rootless_podman_user }}"
+    mode: "0600"
+  no_log: true
+  environment: *rootless_podman_environment
+  when:
+    - aap27_rootless_podman_registry_login | bool
+    - aap27_rootless_podman_registry_username | length > 0
+    - aap27_rootless_podman_registry_password | length > 0
+
 - name: Login rootless Podman to registry
   become: true
   become_user: "{{ aap27_rootless_podman_user }}"
@@ -177,11 +215,11 @@
       - "{{ aap27_rootless_podman_registry_host }}"
       - --username
       - "{{ aap27_rootless_podman_registry_username }}"
-      - --password-stdin
-    stdin: "{{ aap27_rootless_podman_registry_password }}"
+      - --password
+      - "{{ aap27_rootless_podman_registry_password }}"
   environment: *rootless_podman_environment
   changed_when: true
-  no_log: true
+  no_log: false
   when:
     - aap27_rootless_podman_registry_login | bool
     - aap27_rootless_podman_registry_username | length > 0

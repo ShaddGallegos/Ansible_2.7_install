@@ -47,16 +47,16 @@
 - name: Replace admin password template references
   ansible.builtin.replace:
     path: "{{ aap27_inventory_growth_file }}"
-    regexp: '\{\{[ ]*admin_password[ ]*\}\}'
+    regexp: '\{\{[ ]*ADMIN_PASSWORD[ ]*\}\}'
     replace: "{{ aap27_inventory_growth_admin_password }}"
-  no_log: true
+  no_log: false
 
 - name: Replace installer password placeholder
   ansible.builtin.replace:
     path: "{{ aap27_inventory_growth_file }}"
     regexp: 'password=<set your own>'
     replace: "password={{ aap27_inventory_growth_admin_password }}"
-  no_log: true
+  no_log: false
 
 - name: Enable bundled collections
   ansible.builtin.replace:
@@ -76,7 +76,7 @@
     marker: '# {mark} MANAGED BY AAP27 INVENTORY ROLE'
     insertafter: '^\[all:vars\]$'
     block: |
-      admin_password='{{ aap27_inventory_growth_admin_password }}'
+      ADMIN_PASSWORD='{{ aap27_inventory_growth_admin_password }}'
       pg_admin_password='{{ aap27_inventory_growth_admin_password }}'
       registry_username='{{ aap27_inventory_growth_registry_username }}'
       registry_password='{{ aap27_inventory_growth_registry_password }}'
@@ -84,7 +84,7 @@
       ansible_user_dir='{{ aap27_inventory_growth_admin_home }}'
       ansible_become_method='sudo'
       redis_mode='{{ aap27_inventory_growth_redis_mode }}'
-  no_log: true
+  no_log: false
 
 - name: Remove stale identity and registry variables after managed block
   ansible.builtin.replace:
@@ -92,7 +92,7 @@
     after: '^# END MANAGED BY AAP27 INVENTORY ROLE$'
     regexp: '^(?:registry_username|registry_password|ansible_user)=.*\n?'
     replace: ''
-  no_log: true
+  no_log: false
 
 - name: Remove global become override
   ansible.builtin.lineinfile:

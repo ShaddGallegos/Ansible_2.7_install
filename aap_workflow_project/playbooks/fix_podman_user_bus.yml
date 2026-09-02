@@ -1,6 +1,6 @@
 ---
 - name: Configure rootless Podman user bus and runtime
-  hosts: "{{ rootless_podman_hosts | default('controller') }}"
+  hosts: "{{ ROOTLESS_PODMAN_HOSTS | default('controller') }}"
   become: true
   gather_facts: true
 
@@ -9,13 +9,13 @@
       ansible.builtin.include_role:
         name: aap27_rootless_podman
       vars:
-        aap27_rootless_podman_user: "{{ deployment_user | default('admin') }}"
-        aap27_rootless_podman_subid_start: "{{ subuid_start | default(100000) }}"
-        aap27_rootless_podman_subid_range: "{{ subuid_count | default(65536) }}"
-        aap27_rootless_podman_enable_socket: "{{ enable_podman_socket | default(true) }}"
-        aap27_rootless_podman_enable_rootful_socket: "{{ enable_rootful_podman_socket | default(false) }}"
-        aap27_rootless_podman_correct_home_ownership: "{{ correct_home_ownership | default(false) }}"
-        aap27_rootless_podman_registry_login: "{{ registry_login | default(false) }}"
-        aap27_rootless_podman_registry_username: "{{ registry_username | default('') }}"
-        aap27_rootless_podman_registry_password: "{{ registry_password | default('') }}"
+        aap27_rootless_podman_user: "{{ AAP_REMOTE_USER | default('admin') }}"
+        aap27_rootless_podman_subid_start: "{{ SUBUID_START | default(100000) }}"
+        aap27_rootless_podman_subid_range: "{{ SUBUID_COUNT | default(65536) }}"
+        aap27_rootless_podman_enable_socket: "{{ ENABLE_PODMAN_SOCKET | default(true) }}"
+        aap27_rootless_podman_enable_rootful_socket: "{{ ENABLE_ROOTFUL_PODMAN_SOCKET | default(false) }}"
+        aap27_rootless_podman_correct_home_ownership: "{{ CORRECT_HOME_OWNERSHIP | default(false) }}"
+        aap27_rootless_podman_registry_login: "{{ REGISTRY_LOGIN | default(false) }}"
+        aap27_rootless_podman_registry_username: "{{ RHSM_USERNAME | default('') }}"
+        aap27_rootless_podman_registry_password: "{{ RHSM_PASSWORD | default('') }}"
         aap27_rootless_podman_fail_on_missing_bus: true

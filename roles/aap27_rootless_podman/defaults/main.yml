@@ -22,5 +22,6 @@ aap27_rootless_podman_fail_on_validation: false
 
 aap27_rootless_podman_registry_login: false
 aap27_rootless_podman_registry_host: registry.redhat.io
-aap27_rootless_podman_registry_username: ""
-aap27_rootless_podman_registry_password: ""
+# Default to canonical RHSM vars so credentials come from ~/.ansible/conf/env.yml
+aap27_rootless_podman_registry_username: "{{ RHSM_USERNAME | default('') }}"
+aap27_rootless_podman_registry_password: "{{ RHSM_PASSWORD | default('') }}"

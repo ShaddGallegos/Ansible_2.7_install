@@ -13,13 +13,19 @@ get_supported_ansible_playbook() {
     return 0
   fi
 
-  venv_dir="${SCRIPT_DIR}/.venv-aap27"
+  venv_dir="${SCRIPT_DIR}/.venv-aap27-runtime"
   if [[ -x "${venv_dir}/bin/ansible-playbook" ]]; then
-    printf '%s' "${venv_dir}/bin/ansible-playbook"
-    return 0
+    version="$("${venv_dir}/bin/ansible-playbook" --version 2>/dev/null | head -n1 || true)"
+    minor="$(sed -nE 's/.*core 2\.([0-9]+).*/\1/p' <<< "${version}")"
+    if [[ "${minor}" == "16" ]]; then
+      printf '%s' "${venv_dir}/bin/ansible-playbook"
+      return 0
+    fi
+    warn "Rebuilding unsupported AAP runtime at ${venv_dir}: ${version:-unknown version}." >&2
+    rm -rf "${venv_dir}"
   fi
 
-  candidate="$(command -v ansible-playbook 2>/dev/null || true)"
+  candidate="$(command -v ansible-playbook -i "${SCRIPT_DIR}/aap_workflow_project/inventory/controller.ini" ${ANSIBLE_VERBOSITY:-} 2>/dev/null || true)"
   if [[ -n "${candidate}" ]]; then
     version="$(${candidate} --version 2>/dev/null | head -n1 || true)"
     minor="$(sed -nE 's/.*core 2\.([0-9]+).*/\1/p' <<< "${version}")"
@@ -42,7 +48,8 @@ get_supported_ansible_playbook() {
 
   log "Creating isolated ansible-core 2.16 runtime at ${venv_dir}."
   "${python_cmd}" -m venv "${venv_dir}"
-  "${venv_dir}/bin/python" -m pip install --disable-pip-version-check 'ansible-core>=2.16,<2.17'
+  "${venv_dir}/bin/python" -m pip install --disable-pip-version-check \
+    -r "${SCRIPT_DIR}/requirements-runtime.txt"
   printf '%s' "${venv_dir}/bin/ansible-playbook"
 }
 

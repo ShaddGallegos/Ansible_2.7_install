@@ -103,6 +103,7 @@ test_extract_bundle_detects_version_mismatch() {
 
   DOWNLOAD_DIR="${tmp_dir}/downloads"
   ENV_FILE="${tmp_dir}/env"
+  INSTALL_SCOPE="local"
   BUNDLE_FILE="ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64.tar.gz"
   BUNDLE_DIR_NAME="ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64"
   get_controller_user() { echo "testuser"; }
@@ -235,7 +236,9 @@ test_remote_inventory_uses_saved_fqdn_alias() {
   NONINTERACTIVE=true
   INSTALL_SCOPE=remote
   AAP_CONTROLLER_IP="192.0.2.15"
-  AAP_CONTROLLER_FQDN="aap.example.test"
+  AAP_SHORTNAME="aap"
+  AAP_DOMAIN_NAME="example.test"
+  AAP_CONTROLLER_FQDN="${AAP_SHORTNAME}.${AAP_DOMAIN_NAME}"
 
   initial_install_scope_prompt >/dev/null
 
@@ -248,7 +251,7 @@ test_remote_inventory_uses_saved_fqdn_alias() {
   rm -rf "${tmp_dir}"
 }
 
-test_automated_install_forces_target_prompts() {
+test_explicit_target_reconfiguration_prompts() {
   local tmp_dir
   tmp_dir="$(mktemp -d)"
   mkdir -p "${tmp_dir}/aap_workflow_project/inventory"
@@ -263,9 +266,9 @@ test_automated_install_forces_target_prompts() {
     initial_install_scope_prompt true <<< $'2\n192.0.2.25\nnew-aap\nprod.example\n' >/dev/null
   )
 
-  assert_status "automated install prompts for target IP" 0 \
+  assert_status "explicit target reconfiguration updates target IP" 0 \
     grep -q 'ansible_host=192\.0\.2\.25 ' "${tmp_dir}/aap_workflow_project/inventory/controller.ini"
-  assert_status "automated install prompts for short hostname and domain" 0 \
+  assert_status "explicit target reconfiguration updates hostname and domain" 0 \
     grep -q '^new-aap\.prod\.example ansible_host=' "${tmp_dir}/aap_workflow_project/inventory/controller.ini"
 
   rm -rf "${tmp_dir}"
@@ -329,8 +332,8 @@ EOF
 
   assert_status "rootless wrapper keeps password out of argv" 1 grep -q 'test password' "${CAPTURE_ARGS}"
   assert_eq "rootless wrapper uses mode-0600 vars" "600" "$(cat "${CAPTURE_MODE}")"
-  assert_eq "rootless wrapper forwards deployment user" "platformops" "$(jq -r .deployment_user "${CAPTURE_VARS}")"
-  assert_eq "rootless wrapper forwards registry login flag" "true" "$(jq -r .registry_login "${CAPTURE_VARS}")"
+  assert_eq "rootless wrapper forwards deployment user" "platformops" "$(jq -r .AAP_REMOTE_USER "${CAPTURE_VARS}")"
+  assert_eq "rootless wrapper forwards registry login flag" "true" "$(jq -r .REGISTRY_LOGIN "${CAPTURE_VARS}")"
 
   SCRIPT_DIR="${original_script_dir}"
   PATH="${original_path}"
@@ -446,8 +449,11 @@ test_complete_install_pipeline_order() {
 
   (
     configure_install_scope() { printf '%s\n' scope >> "${SCOPE_CALLS_FILE}"; INSTALL_SCOPE=remote; }
+    get_install_scope() { printf '%s' remote; }
+    get_install_target_host() { printf '%s' 192.0.2.15; }
+    bootstrap_remote_admin() { :; }
     setup_admin_user() { printf '%s\n' admin >> "${SCOPE_CALLS_FILE}"; }
-    preflight_dependency_checks() { printf '%s\n' preflight >> "${SCOPE_CALLS_FILE}"; }
+    run_preflight_resource_checks() { printf '%s\n' preflight >> "${SCOPE_CALLS_FILE}"; }
     prepare_install_target() { printf '%s\n' security-prework >> "${SCOPE_CALLS_FILE}"; }
     set_fqdn_and_hosts() { printf '%s\n' identity >> "${SCOPE_CALLS_FILE}"; }
     capture_credentials() { printf '%s\n' credentials >> "${SCOPE_CALLS_FILE}"; }
@@ -466,6 +472,9 @@ test_complete_install_pipeline_order() {
   pipeline_status=0
   (
     configure_install_scope() { printf '%s\n' scope >> "${SCOPE_CALLS_FILE}"; INSTALL_SCOPE=remote; }
+    get_install_scope() { printf '%s' remote; }
+    get_install_target_host() { printf '%s' 192.0.2.15; }
+    bootstrap_remote_admin() { :; }
     setup_admin_user() { printf '%s\n' admin-failed >> "${SCOPE_CALLS_FILE}"; return 1; }
     run_complete_install_pipeline
   ) >/dev/null 2>&1 || pipeline_status=$?
@@ -553,10 +562,10 @@ test_inventory_growth_contract() {
     grep -q "ansible_user='admin'" "${tasks_file}"
   assert_status "inventory role removes stale registry and identity keys" 0 \
     grep -q 'registry_username|registry_password|ansible_user' "${tasks_file}"
-  assert_status "inventory playbook maps RHSM username to registry username" 0 \
-    grep -q "rhsm_username | default(registry_username" "${prepare_playbook}"
-  assert_status "inventory playbook maps RHSM password to registry password" 0 \
-    grep -q "rhsm_password | default(registry_password" "${prepare_playbook}"
+  assert_status "inventory playbook maps uppercase RHSM username" 0 \
+    grep -q 'aap27_inventory_growth_registry_username: "{{ RHSM_USERNAME }}"' "${prepare_playbook}"
+  assert_status "inventory playbook maps uppercase RHSM password" 0 \
+    grep -q 'aap27_inventory_growth_registry_password: "{{ RHSM_PASSWORD }}"' "${prepare_playbook}"
   assert_status "install workflow forwards target address" 0 \
     grep -q 'aap27_inventory_growth_target_address: "{{ target_address }}"' "${install_playbook}"
   assert_status "prework installs SSH no-host-key policy" 0 \
@@ -630,10 +639,9 @@ test_resource_shortfall_warning_and_pause() {
 }
 
 test_env_schema_defines_supported_variables() {
-  local schema_file group_vars_file key missing_keys
+  local schema_file key missing_keys lowercase_keys loader_keys schema_keys
   local -a required_keys
-  schema_file="${SCRIPT_DIR}/roles/aap27_defaults/vars/env.yml.example"
-  group_vars_file="${SCRIPT_DIR}/aap_workflow_project/group_vars/all.yml"
+  schema_file="${SCRIPT_DIR}/templates/env.yml.example"
   missing_keys=""
   required_keys=(
     INSTALL_SCOPE NONINTERACTIVE ADMIN_USER ADMIN_HOME ADMIN_PASSWORD
@@ -645,36 +653,33 @@ test_env_schema_defines_supported_variables() {
     AAP_CLEANUP_PURGE_DOWNLOADS AAP_AUTO_CLEANUP_ON_UNINSTALL
     AAP_MIN_CPU AAP_MIN_RAM_GB AAP_MIN_DISK_GB RHSM_USERNAME RHSM_PASSWORD
     RH_OFFLINE_TOKEN RH_AH_TOKEN CDN_USERNAME CDN_PASSWORD REDHAT_USERNAME
-    REDHAT_PASSWORD CONSOLE_USERNAME CONSOLE_PASSWORD target_fqdn admin_user
-    admin_home admin_password remote_user bundle_url bundle_file
-    bundle_dir_name bundle_dir local_bundle_path cleanup_bundle_archive
-    rhsm_username rhsm_password execution_playbook disable_firewall_for_install
-    set_selinux_permissive_for_install rootless_podman_hosts deployment_user
-    subuid_start subuid_count enable_podman_socket enable_rootful_podman_socket
-    registry_login preflight_hosts min_cpu min_ram_gb min_disk_gb
-    fail_on_insufficient_resources registry_auth postgresql_admin_username
-    postgresql_admin_password redis_mode redis_cluster redis_cluster_mode
-    controller_admin_password controller_pg_host controller_pg_user
-    controller_pg_password gateway_admin_password gateway_pg_host
-    gateway_pg_user gateway_pg_password hub_admin_password hub_pg_host
-    hub_pg_user hub_pg_password eda_admin_password eda_pg_host eda_pg_user
-    eda_pg_password automationmetrics_admin_password automationmetrics_pg_host
-    automationmetrics_pg_user automationmetrics_pg_password
-    automationmetrics_controller_read_pg_host automationmetrics_controller_read_pg_user
-    automationmetrics_controller_read_pg_password
+    REDHAT_PASSWORD CONSOLE_USERNAME CONSOLE_PASSWORD POSTGRESQL_ADMIN_PASSWORD
+    CONTROLLER_ADMIN_PASSWORD CONTROLLER_PG_PASSWORD GATEWAY_ADMIN_PASSWORD
+    GATEWAY_PG_PASSWORD HUB_ADMIN_PASSWORD HUB_PG_PASSWORD EDA_ADMIN_PASSWORD
+    EDA_PG_PASSWORD AUTOMATIONMETRICS_ADMIN_PASSWORD
+    AUTOMATIONMETRICS_PG_PASSWORD
+    AUTOMATIONMETRICS_CONTROLLER_READ_PG_PASSWORD
   )
 
-  while IFS= read -r key; do
-    required_keys+=("${key}")
-  done < <(sed -nE 's/^([A-Za-z_][A-Za-z0-9_]*):.*/\1/p' "${group_vars_file}")
-
   for key in "${required_keys[@]}"; do
-    if ! grep -qE "^${key}:" "${schema_file}"; then
+    if ! grep -qE "^[[:space:]]+${key}:" "${schema_file}"; then
       missing_keys+=" ${key}"
     fi
   done
 
   assert_eq "env schema defines all supported variables" "" "${missing_keys}"
+  lowercase_keys="$(sed -nE 's/^[[:space:]]+([A-Za-z_][A-Za-z0-9_]*):.*/\1/p' "${schema_file}" | grep -vE '^[A-Z][A-Z0-9_]*$' || true)"
+  assert_eq "canonical env schema contains uppercase keys only" "" "${lowercase_keys}"
+  schema_keys="$(sed -nE 's/^[[:space:]]+([A-Z][A-Z0-9_]*):.*/\1/p' "${schema_file}" | sort)"
+  loader_keys="$(sed -n '/^AAP27_STATE_KEYS=(/,/^)/p' "${SCRIPT_DIR}/lib/state.sh" | tr ' ' '\n' | grep -E '^[A-Z][A-Z0-9_]*$' | sort)"
+  assert_eq "canonical env schema matches shell loader" "${schema_keys}" "${loader_keys}"
+  assert_status "local bundle prompt persists canonical path" 0 \
+    grep -q 'save_env_kv "LOCAL_BUNDLE_PATH"' "${SCRIPT_DIR}/aap27_installer.sh"
+  assert_status "installer secret collection includes admin password" 0 \
+    grep -q 'ADMIN_PASSWORD|Enter admin_password' "${SCRIPT_DIR}/lib/state.sh"
+  assert_status "controller workflow validates required credentials" 0 \
+    grep -q 'Validate controller resource credentials' \
+    "${SCRIPT_DIR}/aap_workflow_project/playbooks/create_controller_resources.yml"
 }
 
 test_installer_does_not_force_global_become() {
@@ -835,7 +840,7 @@ test_legacy_env_file_migrates_to_yaml
 test_collection_patch_version_gate
 test_sourcing_preserves_caller_options
 test_remote_inventory_uses_saved_fqdn_alias
-test_automated_install_forces_target_prompts
+test_explicit_target_reconfiguration_prompts
 test_configurable_admin_identity
 test_rootless_playbook_wrapper_hides_secrets
 test_2_7_4_tls_hotfix_is_idempotent

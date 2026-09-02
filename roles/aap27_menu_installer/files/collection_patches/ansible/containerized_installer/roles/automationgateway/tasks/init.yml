@@ -86,7 +86,7 @@
   failed_when:
     - automationgateway_updatesuperuser is failed
     - not "'User matching query does not exist' in automationgateway_updatesuperuser.stderr"
-  no_log: true
+  no_log: false
   run_once: true
   retries: 5
   delay: 30

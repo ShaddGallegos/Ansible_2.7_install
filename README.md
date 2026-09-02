@@ -161,7 +161,7 @@ Remote order is significant: select remote scope, provision the remote admin,
 then run preflight/prework and the remaining steps. Menu option 5 and
 `--non-interactive` both enforce this fail-fast order:
 
-1. Select the installation target.
+1. Load the installation target from canonical state.
 2. Bootstrap admin, RHEL repositories, and prerequisite packages.
 3. Run dependency and resource preflight checks.
 4. Prepare the host, disable firewalld, and set SELinux permissive.
@@ -181,10 +181,10 @@ entry is never mutated by remote preparation.
 - Installer execution (Step 10) requires a non-root SSH remote user; root is rejected by containerized installer preflight.
 - Installer state is stored under the invoking user's home at
   `~/.ansible/conf/env.yml` (Ansible Vault encrypted, mode `0600`), shared across
-  all local Ansible projects. It has a `common:` section for values usable by
-  any project (RHSM/CDN/console credentials, tokens) and an
-  `Ansible_2.7_install:` section for this project's own keys, which take
-  precedence over `common` on collision. Decryption uses the vault password
+  all local Ansible projects. This project's uppercase keys are stored under
+  `ANSIBLE_2.7_INSTALL`; `templates/env.yml.example` is the canonical non-secret
+  schema. Existing lowercase keys are promoted without replacing nonempty
+  values. Updates are atomic and retain `env.yml.bak`. Decryption uses the vault password
   file at `~/.ansible/conf/.vaultpass.txt`, which is created once and reused
   (never recreated) across all projects and runs.
   The one-time remote root password is removed from state after bootstrap.
@@ -200,6 +200,17 @@ entry is never mutated by remote preparation.
   prompt to create it.
 - Review generated `inventory-growth` before installation.
 - This tool does not replace official Red Hat documentation.
+
+## Development and Runtime Environments
+
+- `.venv-aap27-runtime` is generated from `requirements-runtime.txt` and pins
+  the installer execution path to supported `ansible-core` 2.16.
+- `.venv-aap27` is the editor/development environment from
+  `requirements-dev.txt`; VS Code uses it for `ansible-lint`.
+- `lib/state.sh` owns canonical state and credential handling.
+- `lib/target.sh` owns target resolution and generated controller inventory.
+- `lib/workflow.sh` owns full-install sequencing and fail-fast behavior.
+- `aap27_installer.sh` remains the CLI and interactive menu entrypoint.
 
 ## Helpful Links
 

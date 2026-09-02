@@ -1,0 +1,1188 @@
+[0;34m[INFO][0m [INFO] Non-interactive mode using RHSM_USERNAME: shadd@redhat.com
+[0;34m[INFO][0m Automated mode: prompting for target selection, then running the full install workflow.
+[0;34m[INFO][0m Full install 1: select installation target
+[H[2J[3JInstallation Mode
+=================
+1) Local (install on this system)
+2) Remote (install on remote controller)
+[0;34m[INFO][0m Writing remote inventory to /run/media/sgallego/SD_Card/GIT/Ansible_2.7_install/aap_workflow_project/inventory/controller.ini (controller=aap.prod.spg, ansible_host=192.168.122.84)
+[0;34m[INFO][0m [INFO] Non-interactive mode using RHSM_USERNAME: shadd@redhat.com
+[0;34m[INFO][0m Automated mode: prompting for target selection, then running the full install workflow.
+[0;34m[INFO][0m Full install 1: select installation target
+[H[2J[3JInstallation Mode
+=================
+1) Local (install on this system)
+2) Remote (install on remote controller)
+[0;34m[INFO][0m [INFO] Non-interactive mode using RHSM_USERNAME: shadd@redhat.com
+[0;34m[INFO][0m Automated mode: prompting for target selection, then running the full install workflow.
+[0;34m[INFO][0m Full install 1: select installation target
+[H[2J[3JInstallation Mode
+=================
+1) Local (install on this system)
+2) Remote (install on remote controller)
+
+==================================================
+       Verifying Stored AAP Parameters           
+==================================================
+  RHSM_USERNAME: shadd@redhat.com
+  AAP_REMOTE_FQDN: aap.prod.spg
+  AAP_REMOTE_IP: 192.168.122.84
+  AAP_INSTALLER_SSH_KEY: /home/sgallego/.ssh/id_ed25519
+  AAP_INSTALLER_USER: sgallego
+  AAP_REMOTE_USER: admin
+  INSTALL_SCOPE: remote
+  RHSM_PASSWORD: [VERIFIED]
+==================================================
+
+
+[0;34m[INFO][0m Automated mode: prompting for target selection, then running the full install workflow.
+[0;34m[INFO][0m Full install 1: select installation target
+[0;34m[INFO][0m [INFO] Using verified target: aap.prod.spg (192.168.122.84) Scope: remote
+[0;34m[INFO][0m [INFO] Bootstrapping target host 192.168.122.84 via root@192.168.122.84...
+[0;34m[INFO][0m [OK] Target host 192.168.122.84 bootstrapped successfully.
+[0;34m[INFO][0m Full install 2: bootstrap admin, RHEL repositories, and prerequisite packages
+[0;34m[INFO][0m Remote installation target detected (remote). Skipping local admin user setup.
+
+==================================================
+       Verifying Stored AAP Parameters           
+==================================================
+  RHSM_USERNAME: shadd@redhat.com
+  AAP_REMOTE_FQDN: aap.prod.spg
+  AAP_REMOTE_IP: 192.168.122.84
+  AAP_INSTALLER_SSH_KEY: /home/sgallego/.ssh/id_ed25519
+  AAP_INSTALLER_USER: sgallego
+  AAP_REMOTE_USER: admin
+  INSTALL_SCOPE: remote
+  RHSM_PASSWORD: [VERIFIED]
+==================================================
+
+[0;34m[INFO][0m Automated mode: prompting for target selection, then running the full install workflow.
+[0;34m[INFO][0m Full install 1: select installation target
+[0;34m[INFO][0m [INFO] Using verified target: aap.prod.spg (192.168.122.84) Scope: remote
+[0;34m[INFO][0m [INFO] Bootstrapping target host 192.168.122.84 via root@192.168.122.84...
+[0;34m[INFO][0m [OK] Target host 192.168.122.84 bootstrapped successfully.
+[0;34m[INFO][0m Full install 2: bootstrap admin, RHEL repositories, and prerequisite packages
+[0;34m[INFO][0m Remote installation target detected (remote). Skipping local admin user setup.
+[0;34m[INFO][0m Full install 3: prerequisite resource and package checks
+[0;34m[INFO][0m [INFO] Running remote preflight resource checks on target host ()...
+[0;34m[INFO][0m [INFO] Non-interactive mode using RHSM_USERNAME: shadd@redhat.com
+
+==================================================
+       Verifying Stored AAP Parameters           
+==================================================
+  RHSM_USERNAME: shadd@redhat.com
+  AAP_REMOTE_FQDN: aap.prod.spg
+  AAP_REMOTE_IP: 192.168.122.84
+  AAP_INSTALLER_SSH_KEY: /home/sgallego/.ssh/id_ed25519
+  AAP_INSTALLER_USER: sgallego
+  AAP_REMOTE_USER: admin
+  INSTALL_SCOPE: remote
+  INVENTORY_GROWTH_USERNAME: admin
+  RHSM_PASSWORD: [VERIFIED]
+  RH_OFFLINE_TOKEN: [NOT SET]
+  RH_AH_TOKEN: [NOT SET]
+  ROOT_PASSWORD: [VERIFIED]
+==================================================\n
+[0;34m[INFO][0m Automated mode: prompting for target selection, then running the full install workflow.
+[0;34m[INFO][0m Full install 1: select installation target
+[0;34m[INFO][0m [INFO] Using verified target: aap.prod.spg (192.168.122.84) Scope: remote
+[0;34m[INFO][0m [INFO] Bootstrapping target host 192.168.122.84 via root@192.168.122.84...
+[0;34m[INFO][0m [OK] Target host 192.168.122.84 bootstrapped successfully.
+[0;34m[INFO][0m Full install 2: bootstrap admin, RHEL repositories, and prerequisite packages
+[0;34m[INFO][0m Remote installation target detected (remote). Skipping local admin user setup.
+[0;34m[INFO][0m Full install 3: prerequisite resource and package checks
+[0;34m[INFO][0m [INFO] Running remote preflight resource checks on target host (aap.prod.spg / 192.168.122.84)...
+[ OK ] Remote Target vCPUs: 4 detected (minimum 4).
+[ OK ] Remote Target RAM: 15 GB detected (minimum 16 GB).
+[ OK ] Remote Target Storage: 45 GB free on / (minimum 40 GB).
+[ OK ] Remote Target podman is available: podman version 5.8.2
+[0;34m[INFO][0m [INFO] Running remote preflight resource checks on target host (aap.prod.spg / 192.168.122.84)...
+[ OK ] Remote Target vCPUs: 4 detected (minimum 4).
+[ OK ] Remote Target RAM: 15 GB detected (minimum 16 GB).
+[ OK ] Remote Target Storage: 45 GB free on / (minimum 40 GB).
+[ OK ] Remote Target podman is available: podman version 5.8.2
+[0;34m[INFO][0m Full install 4: prepare host and relax firewalld/SELinux for installation
+
+PLAY [AAP prework on target host] **********************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [aap.prod.spg]
+
+TASK [Validate target host resource capacity] **********************************
+included: aap27_preflight for aap.prod.spg
+
+TASK [aap27_preflight : Gather hardware and mount facts] ***********************
+ok: [aap.prod.spg]
+
+TASK [aap27_preflight : Resolve requested disk mount] **************************
+ok: [aap.prod.spg]
+
+TASK [aap27_preflight : Validate preflight inputs and facts] *******************
+ok: [aap.prod.spg] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [aap27_preflight : Calculate resource capacity] ***************************
+ok: [aap.prod.spg]
+
+TASK [aap27_preflight : Report resource capacity] ******************************
+ok: [aap.prod.spg] => {
+    "msg": [
+        "CPU: 4 vCPU(s), minimum 4",
+        "RAM: 15 GB, minimum 16 GB",
+        "Disk: 44 GB available on /, minimum 40 GB"
+    ]
+}
+
+TASK [aap27_preflight : Enforce minimum resource capacity] *********************
+skipping: [aap.prod.spg]
+
+TASK [aap27_preflight : Warn when CPU capacity is below minimum] ***************
+skipping: [aap.prod.spg]
+
+TASK [aap27_preflight : Warn when RAM capacity is below minimum] ***************
+ok: [aap.prod.spg] => {
+    "msg": "WARNING: 15 GB RAM is below the configured minimum of 16 GB."
+}
+
+TASK [aap27_preflight : Warn when disk capacity is below minimum] **************
+skipping: [aap.prod.spg]
+
+TASK [Install required packages (best effort)] *********************************
+ok: [aap.prod.spg]
+
+TASK [Ensure common packages are installed (all distros)] **********************
+ok: [aap.prod.spg]
+
+TASK [Enable passwordless sudo for installer user] *****************************
+ok: [aap.prod.spg]
+
+TASK [Ensure system SSH client configuration directory exists] *****************
+ok: [aap.prod.spg]
+
+TASK [Disable SSH host-key checking for installer workflows] *******************
+ok: [aap.prod.spg]
+
+TASK [Configure rootless Podman runtime for installer user] ********************
+included: aap27_rootless_podman for aap.prod.spg
+
+TASK [aap27_rootless_podman : Validate rootless Podman role inputs] ************
+ok: [aap.prod.spg] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [aap27_rootless_podman : Install rootless Podman packages] ****************
+skipping: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Ensure rootless Podman user exists] **************
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Ensure subordinate UID mapping exists] ***********
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Ensure subordinate GID mapping exists] ***********
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Configure maximum user namespaces] ***************
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Resolve rootless Podman user UID] ****************
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Resolve rootless Podman user home] ***************
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Set rootless Podman runtime facts] ***************
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Correct rootless Podman user home ownership] *****
+skipping: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Enable lingering for rootless Podman user] *******
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Ensure rootless Podman user manager is running] ***
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Wait for rootless Podman user DBus socket] *******
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Run rootless Podman storage migration] ***********
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Enable rootless Podman socket] *******************
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Configure Docker-compatible rootless Podman socket] ***
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Enable rootful Podman socket] ********************
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Check current rootless registry login] ***********
+skipping: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Login rootless Podman to registry] ***************
+skipping: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Validate rootless Podman runtime] ****************
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Report rootless Podman configuration] ************
+ok: [aap.prod.spg] => {
+    "msg": [
+        "Rootless Podman user: admin",
+        "Runtime directory: /run/user/1000",
+        "User socket enabled: True",
+        "Podman validation rc: 0"
+    ]
+}
+
+TASK [Ensure podman temporary directory for image loads exists] ****************
+ok: [aap.prod.spg]
+
+TASK [Disable firewalld for installation] **************************************
+ok: [aap.prod.spg]
+
+TASK [Set runtime SELinux permissive] ******************************************
+ok: [aap.prod.spg]
+
+TASK [Set SELinux config permissive] *******************************************
+ok: [aap.prod.spg]
+
+PLAY [Ensure `sshpass` on installer (local control host)] **********************
+
+TASK [Ensure `sshpass` and podman are installed on installer host] *************
+ok: [localhost]
+
+PLAY RECAP *********************************************************************
+aap.prod.spg               : ok=35   changed=0    unreachable=0    failed=0    skipped=7    rescued=0    ignored=0   
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[0;34m[INFO][0m Full install 5: configure target host identity
+[0;34m[INFO][0m Configuring host identity on admin@192.168.122.84 as aap.prod.spg.
+
+PLAY [Configure host identity for AAP install] *********************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [aap.prod.spg]
+
+TASK [Set hostname to target FQDN] *********************************************
+ok: [aap.prod.spg]
+
+TASK [Compute primary IP] ******************************************************
+ok: [aap.prod.spg]
+
+TASK [Ensure /etc/hosts entry with aap alias] **********************************
+ok: [aap.prod.spg]
+
+TASK [Ensure admin user exists] ************************************************
+ok: [aap.prod.spg]
+
+TASK [Set admin password when provided] ****************************************
+skipping: [aap.prod.spg]
+
+TASK [Configure passwordless sudo for admin] ***********************************
+changed: [aap.prod.spg]
+
+TASK [Ensure admin .ssh dir exists] ********************************************
+ok: [aap.prod.spg]
+
+TASK [Generate admin ssh key if missing] ***************************************
+ok: [aap.prod.spg]
+
+PLAY RECAP *********************************************************************
+aap.prod.spg               : ok=8    changed=1    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   
+
+[0;34m[INFO][0m Full install 6: capture credentials and tokens
+[0;34m[INFO][0m [OK] Step 6: Credentials and tokens verified.
+[0;34m[INFO][0m Full install 7: download and extract the AAP bundle
+[0;31m[ERR ][0m Non-interactive mode: 'Enter RHSM_PASSWORD (Red Hat Login/CDN/registry/console password)' requires a secret with no safe default. Set RHSM_PASSWORD in /home/sgallego/.ansible/conf/env.yml and re-run.
+
+PLAY [Download AAP bundle to target host] **************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [aap.prod.spg]
+
+TASK [Ensure platform download directory exists] *******************************
+ok: [aap.prod.spg]
+
+TASK [Check persisted bundle directory marker] *********************************
+ok: [aap.prod.spg]
+
+TASK [Read persisted bundle directory marker] **********************************
+ok: [aap.prod.spg]
+
+TASK [Resolve persisted bundle directory] **************************************
+ok: [aap.prod.spg]
+
+TASK [Check persisted extracted bundle] ****************************************
+ok: [aap.prod.spg]
+
+TASK [Set bundle readiness] ****************************************************
+ok: [aap.prod.spg]
+
+TASK [Copy controller-local bundle to target] **********************************
+skipping: [aap.prod.spg]
+
+TASK [Download bundle file on target] ******************************************
+skipping: [aap.prod.spg]
+
+TASK [Detect bundle archive root directory] ************************************
+skipping: [aap.prod.spg]
+
+TASK [Resolve effective bundle root directory] *********************************
+ok: [aap.prod.spg]
+
+TASK [Validate bundle archive root directory] **********************************
+ok: [aap.prod.spg] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Extract bundle] **********************************************************
+skipping: [aap.prod.spg]
+
+TASK [Persist detected bundle directory for controller workflows] **************
+ok: [aap.prod.spg]
+
+TASK [Remove compressed bundle archive after extraction] ***********************
+ok: [aap.prod.spg]
+
+PLAY RECAP *********************************************************************
+aap.prod.spg               : ok=11   changed=0    unreachable=0    failed=0    skipped=4    rescued=0    ignored=0   
+
+[0;32m[ OK ][0m Remote bundle ready at admin@192.168.122.84:/home/admin/Downloads/ansible-automation-platform-containerized-setup-bundle-2.7-4-x86_64.
+[0;34m[INFO][0m Full install 8: verify extracted bundle
+[0;32m[ OK ][0m Remote bundle already extracted at admin@192.168.122.84:/home/admin/Downloads/ansible-automation-platform-containerized-setup-bundle-2.7-4-x86_64.
+[0;34m[INFO][0m Full install 9: prepare inventory-growth
+[0;31m[ERR ][0m Non-interactive mode: 'Enter RHSM_PASSWORD (Red Hat Login/CDN/registry/console password)' requires a secret with no safe default. Set RHSM_PASSWORD in /home/sgallego/.ansible/conf/env.yml and re-run.
+
+PLAY [Prepare target-local inventory-growth] ***********************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [aap.prod.spg]
+
+TASK [Apply inventory-growth role] *********************************************
+included: aap27_inventory_growth for aap.prod.spg
+
+TASK [aap27_inventory_growth : Validate inventory-growth inputs] ***************
+ok: [aap.prod.spg] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [aap27_inventory_growth : Check inventory-growth exists] ******************
+ok: [aap.prod.spg]
+
+TASK [aap27_inventory_growth : Require inventory-growth file] ******************
+ok: [aap.prod.spg] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [aap27_inventory_growth : Preserve original inventory-growth once] ********
+ok: [aap.prod.spg]
+
+TASK [aap27_inventory_growth : Replace example hostnames] **********************
+ok: [aap.prod.spg]
+
+TASK [aap27_inventory_growth : Normalize component host lines for target-local execution] ***
+ok: [aap.prod.spg]
+
+TASK [aap27_inventory_growth : Replace admin password template references] *****
+[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.replace' failed: Error while resolving value for 'replace': 'ADMIN_PASSWORD' is undefined
+
+Task failed.
+Origin: /run/media/sgallego/SD_Card/GIT/Ansible_2.7_install/roles/aap27_inventory_growth/tasks/main.yml:47:3
+
+45       {{ aap27_inventory_growth_target_fqdn }} ansible_host={{ aap27_inventory_growth_target_address }}
+46
+47 - name: Replace admin password template references
+     ^ column 3
+
+<<< caused by >>>
+
+Finalization of task args for 'ansible.builtin.replace' failed.
+Origin: /run/media/sgallego/SD_Card/GIT/Ansible_2.7_install/roles/aap27_inventory_growth/tasks/main.yml:48:3
+
+46
+47 - name: Replace admin password template references
+48   ansible.builtin.replace:
+     ^ column 3
+
+<<< caused by >>>
+
+Error while resolving value for 'replace'.
+Origin: /run/media/sgallego/SD_Card/GIT/Ansible_2.7_install/roles/aap27_inventory_growth/tasks/main.yml:51:14
+
+49     path: "{{ aap27_inventory_growth_file }}"
+50     regexp: '\{\{[ ]*ADMIN_PASSWORD[ ]*\}\}'
+51     replace: "{{ aap27_inventory_growth_admin_password }}"
+                ^ column 14
+
+<<< caused by >>>
+
+'ADMIN_PASSWORD' is undefined
+Origin: /run/media/sgallego/SD_Card/GIT/Ansible_2.7_install/aap_workflow_project/playbooks/prepare_inventory_growth.yml:18:48
+
+16         aap27_inventory_growth_admin_user: "{{ admin_user | default('admin') }}"
+17         aap27_inventory_growth_admin_home: "{{ admin_home | default('/home/' ~ (admin_user | default('admin'))) }}"
+18         aap27_inventory_growth_admin_password: "{{ ADMIN_PASSWORD }}"
+                                                  ^ column 48
+
+fatal: [aap.prod.spg]: FAILED! => {"changed": false, "msg": "Task failed: Finalization of task args for 'ansible.builtin.replace' failed: Error while resolving value for 'replace': 'ADMIN_PASSWORD' is undefined"}
+
+PLAY RECAP *********************************************************************
+aap.prod.spg               : ok=8    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
+[0;31m[ERR ][0m Remote inventory-growth preparation failed on admin@192.168.122.84.
+[0;34m[INFO][0m [INFO] Non-interactive mode using RHSM_USERNAME: shadd@redhat.com
+
+
+
+==================================================
+       Verifying Stored AAP Parameters           
+==================================================
+  RHSM_USERNAME: shadd@redhat.com
+  AAP_REMOTE_FQDN: aap.prod.spg
+  AAP_REMOTE_IP: 192.168.122.84
+  AAP_INSTALLER_SSH_KEY: /home/sgallego/.ssh/id_ed25519
+  AAP_INSTALLER_USER: sgallego
+  AAP_REMOTE_USER: admin
+  INSTALL_SCOPE: remote
+  INVENTORY_GROWTH_USERNAME: admin
+  INVENTORY_GROWTH_PASSWORD: redhat
+  RHSM_PASSWORD: [PRESENT]
+  RH_OFFLINE_TOKEN: [NOT SET]
+  RH_AH_TOKEN: [NOT SET]
+  ROOT_PASSWORD: [PRESENT]
+==================================================\n
+[0;34m[INFO][0m Automated mode: prompting for target selection, then running the full install workflow.
+[0;34m[INFO][0m Full install 1: select installation target
+[0;34m[INFO][0m [INFO] Using verified target: aap.prod.spg (192.168.122.84) Scope: remote
+[0;34m[INFO][0m [INFO] Bootstrapping target host 192.168.122.84 via root@192.168.122.84...
+[0;34m[INFO][0m [OK] Target host 192.168.122.84 bootstrapped successfully.
+[0;34m[INFO][0m Full install 2: bootstrap admin, RHEL repositories, and prerequisite packages
+[0;34m[INFO][0m Remote installation target detected (remote). Skipping local admin user setup.
+[0;34m[INFO][0m Full install 3: prerequisite resource and package checks
+[0;34m[INFO][0m [INFO] Running remote preflight resource checks on target host (aap.prod.spg / 192.168.122.84)...
+[ OK ] Remote Target vCPUs: 4 detected (minimum 4).
+[ OK ] Remote Target RAM: 15 GB detected (minimum 16 GB).
+[ OK ] Remote Target Storage: 45 GB free on / (minimum 40 GB).
+[ OK ] Remote Target podman is available: podman version 5.8.2
+[0;34m[INFO][0m [INFO] Running remote preflight resource checks on target host (aap.prod.spg / 192.168.122.84)...
+[ OK ] Remote Target vCPUs: 4 detected (minimum 4).
+[ OK ] Remote Target RAM: 15 GB detected (minimum 16 GB).
+[ OK ] Remote Target Storage: 45 GB free on / (minimum 40 GB).
+[ OK ] Remote Target podman is available: podman version 5.8.2
+[0;34m[INFO][0m Full install 4: prepare host and relax firewalld/SELinux for installation
+
+PLAY [AAP prework on target host] **********************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [aap.prod.spg]
+
+TASK [Validate target host resource capacity] **********************************
+included: aap27_preflight for aap.prod.spg
+
+TASK [aap27_preflight : Gather hardware and mount facts] ***********************
+ok: [aap.prod.spg]
+
+TASK [aap27_preflight : Resolve requested disk mount] **************************
+ok: [aap.prod.spg]
+
+TASK [aap27_preflight : Validate preflight inputs and facts] *******************
+ok: [aap.prod.spg] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [aap27_preflight : Calculate resource capacity] ***************************
+ok: [aap.prod.spg]
+
+TASK [aap27_preflight : Report resource capacity] ******************************
+ok: [aap.prod.spg] => {
+    "msg": [
+        "CPU: 4 vCPU(s), minimum 4",
+        "RAM: 15 GB, minimum 16 GB",
+        "Disk: 44 GB available on /, minimum 40 GB"
+    ]
+}
+
+TASK [aap27_preflight : Enforce minimum resource capacity] *********************
+skipping: [aap.prod.spg]
+
+TASK [aap27_preflight : Warn when CPU capacity is below minimum] ***************
+skipping: [aap.prod.spg]
+
+TASK [aap27_preflight : Warn when RAM capacity is below minimum] ***************
+ok: [aap.prod.spg] => {
+    "msg": "WARNING: 15 GB RAM is below the configured minimum of 16 GB."
+}
+
+TASK [aap27_preflight : Warn when disk capacity is below minimum] **************
+skipping: [aap.prod.spg]
+
+TASK [Install required packages (best effort)] *********************************
+ok: [aap.prod.spg]
+
+TASK [Ensure common packages are installed (all distros)] **********************
+ok: [aap.prod.spg]
+
+TASK [Enable passwordless sudo for installer user] *****************************
+ok: [aap.prod.spg]
+
+TASK [Ensure system SSH client configuration directory exists] *****************
+ok: [aap.prod.spg]
+
+TASK [Disable SSH host-key checking for installer workflows] *******************
+ok: [aap.prod.spg]
+
+TASK [Configure rootless Podman runtime for installer user] ********************
+included: aap27_rootless_podman for aap.prod.spg
+
+TASK [aap27_rootless_podman : Validate rootless Podman role inputs] ************
+ok: [aap.prod.spg] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [aap27_rootless_podman : Install rootless Podman packages] ****************
+skipping: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Ensure rootless Podman user exists] **************
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Ensure subordinate UID mapping exists] ***********
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Ensure subordinate GID mapping exists] ***********
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Configure maximum user namespaces] ***************
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Resolve rootless Podman user UID] ****************
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Resolve rootless Podman user home] ***************
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Set rootless Podman runtime facts] ***************
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Correct rootless Podman user home ownership] *****
+skipping: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Enable lingering for rootless Podman user] *******
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Ensure rootless Podman user manager is running] ***
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Wait for rootless Podman user DBus socket] *******
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Run rootless Podman storage migration] ***********
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Enable rootless Podman socket] *******************
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Configure Docker-compatible rootless Podman socket] ***
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Enable rootful Podman socket] ********************
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Check current rootless registry login] ***********
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Login rootless Podman to registry] ***************
+skipping: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Validate rootless Podman runtime] ****************
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Report rootless Podman configuration] ************
+ok: [aap.prod.spg] => {
+    "msg": [
+        "Rootless Podman user: admin",
+        "Runtime directory: /run/user/1000",
+        "User socket enabled: True",
+        "Podman validation rc: 0"
+    ]
+}
+
+TASK [Ensure podman temporary directory for image loads exists] ****************
+ok: [aap.prod.spg]
+
+TASK [Disable firewalld for installation] **************************************
+ok: [aap.prod.spg]
+
+TASK [Set runtime SELinux permissive] ******************************************
+ok: [aap.prod.spg]
+
+TASK [Set SELinux config permissive] *******************************************
+ok: [aap.prod.spg]
+
+PLAY [Ensure `sshpass` on installer (local control host)] **********************
+
+TASK [Ensure `sshpass` and podman are installed on installer host] *************
+ok: [localhost]
+
+PLAY RECAP *********************************************************************
+aap.prod.spg               : ok=36   changed=0    unreachable=0    failed=0    skipped=6    rescued=0    ignored=0   
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[0;34m[INFO][0m Full install 5: configure target host identity
+[0;34m[INFO][0m Configuring host identity on admin@192.168.122.84 as aap.prod.spg.
+
+PLAY [Configure host identity for AAP install] *********************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [aap.prod.spg]
+
+TASK [Set hostname to target FQDN] *********************************************
+ok: [aap.prod.spg]
+
+TASK [Compute primary IP] ******************************************************
+ok: [aap.prod.spg]
+
+TASK [Ensure /etc/hosts entry with aap alias] **********************************
+ok: [aap.prod.spg]
+
+TASK [Ensure admin user exists] ************************************************
+ok: [aap.prod.spg]
+
+TASK [Set admin password when provided] ****************************************
+skipping: [aap.prod.spg]
+
+TASK [Configure passwordless sudo for admin] ***********************************
+changed: [aap.prod.spg]
+
+TASK [Ensure admin .ssh dir exists] ********************************************
+ok: [aap.prod.spg]
+
+TASK [Generate admin ssh key if missing] ***************************************
+ok: [aap.prod.spg]
+
+PLAY RECAP *********************************************************************
+aap.prod.spg               : ok=8    changed=1    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   
+
+[0;34m[INFO][0m Full install 6: capture credentials and tokens
+[0;34m[INFO][0m [OK] Step 6: Credentials and tokens verified.
+[0;34m[INFO][0m Full install 7: download and extract the AAP bundle
+
+PLAY [Download AAP bundle to target host] **************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [aap.prod.spg]
+
+TASK [Ensure platform download directory exists] *******************************
+ok: [aap.prod.spg]
+
+TASK [Check persisted bundle directory marker] *********************************
+ok: [aap.prod.spg]
+
+TASK [Read persisted bundle directory marker] **********************************
+ok: [aap.prod.spg]
+
+TASK [Resolve persisted bundle directory] **************************************
+ok: [aap.prod.spg]
+
+TASK [Check persisted extracted bundle] ****************************************
+ok: [aap.prod.spg]
+
+TASK [Set bundle readiness] ****************************************************
+ok: [aap.prod.spg]
+
+TASK [Copy controller-local bundle to target] **********************************
+skipping: [aap.prod.spg]
+
+TASK [Download bundle file on target] ******************************************
+skipping: [aap.prod.spg]
+
+TASK [Detect bundle archive root directory] ************************************
+skipping: [aap.prod.spg]
+
+TASK [Resolve effective bundle root directory] *********************************
+ok: [aap.prod.spg]
+
+TASK [Validate bundle archive root directory] **********************************
+ok: [aap.prod.spg] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Extract bundle] **********************************************************
+skipping: [aap.prod.spg]
+
+TASK [Persist detected bundle directory for controller workflows] **************
+ok: [aap.prod.spg]
+
+TASK [Remove compressed bundle archive after extraction] ***********************
+ok: [aap.prod.spg]
+
+PLAY RECAP *********************************************************************
+aap.prod.spg               : ok=11   changed=0    unreachable=0    failed=0    skipped=4    rescued=0    ignored=0   
+
+[0;32m[ OK ][0m Remote bundle ready at admin@192.168.122.84:/home/admin/Downloads/ansible-automation-platform-containerized-setup-bundle-2.7-4-x86_64.
+[0;34m[INFO][0m Full install 8: verify extracted bundle
+[0;32m[ OK ][0m Remote bundle already extracted at admin@192.168.122.84:/home/admin/Downloads/ansible-automation-platform-containerized-setup-bundle-2.7-4-x86_64.
+[0;34m[INFO][0m Full install 9: prepare inventory-growth
+
+PLAY [Prepare target-local inventory-growth] ***********************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [aap.prod.spg]
+
+TASK [Apply inventory-growth role] *********************************************
+included: aap27_inventory_growth for aap.prod.spg
+
+TASK [aap27_inventory_growth : Validate inventory-growth inputs] ***************
+ok: [aap.prod.spg] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [aap27_inventory_growth : Check inventory-growth exists] ******************
+ok: [aap.prod.spg]
+
+TASK [aap27_inventory_growth : Require inventory-growth file] ******************
+ok: [aap.prod.spg] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [aap27_inventory_growth : Preserve original inventory-growth once] ********
+ok: [aap.prod.spg]
+
+TASK [aap27_inventory_growth : Replace example hostnames] **********************
+ok: [aap.prod.spg]
+
+TASK [aap27_inventory_growth : Normalize component host lines for target-local execution] ***
+ok: [aap.prod.spg]
+
+TASK [aap27_inventory_growth : Replace admin password template references] *****
+[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.replace' failed: Error while resolving value for 'replace': 'ADMIN_PASSWORD' is undefined
+
+Task failed.
+Origin: /run/media/sgallego/SD_Card/GIT/Ansible_2.7_install/roles/aap27_inventory_growth/tasks/main.yml:47:3
+
+45       {{ aap27_inventory_growth_target_fqdn }} ansible_host={{ aap27_inventory_growth_target_address }}
+46
+47 - name: Replace admin password template references
+     ^ column 3
+
+<<< caused by >>>
+
+Finalization of task args for 'ansible.builtin.replace' failed.
+Origin: /run/media/sgallego/SD_Card/GIT/Ansible_2.7_install/roles/aap27_inventory_growth/tasks/main.yml:48:3
+
+46
+47 - name: Replace admin password template references
+48   ansible.builtin.replace:
+     ^ column 3
+
+<<< caused by >>>
+
+Error while resolving value for 'replace'.
+Origin: /run/media/sgallego/SD_Card/GIT/Ansible_2.7_install/roles/aap27_inventory_growth/tasks/main.yml:51:14
+
+49     path: "{{ aap27_inventory_growth_file }}"
+50     regexp: '\{\{[ ]*ADMIN_PASSWORD[ ]*\}\}'
+51     replace: "{{ aap27_inventory_growth_admin_password }}"
+                ^ column 14
+
+<<< caused by >>>
+
+'ADMIN_PASSWORD' is undefined
+Origin: /run/media/sgallego/SD_Card/GIT/Ansible_2.7_install/aap_workflow_project/playbooks/prepare_inventory_growth.yml:18:48
+
+16         aap27_inventory_growth_admin_user: "{{ admin_user | default('admin') }}"
+17         aap27_inventory_growth_admin_home: "{{ admin_home | default('/home/' ~ (admin_user | default('admin'))) }}"
+18         aap27_inventory_growth_admin_password: "{{ ADMIN_PASSWORD }}"
+                                                  ^ column 48
+
+fatal: [aap.prod.spg]: FAILED! => {"changed": false, "msg": "Task failed: Finalization of task args for 'ansible.builtin.replace' failed: Error while resolving value for 'replace': 'ADMIN_PASSWORD' is undefined"}
+
+PLAY RECAP *********************************************************************
+aap.prod.spg               : ok=8    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
+[0;31m[ERR ][0m Remote inventory-growth preparation failed on admin@192.168.122.84.
+
+==================================================
+       Verifying Stored AAP Parameters           
+==================================================
+  RHSM_USERNAME: shadd@redhat.com
+  AAP_REMOTE_FQDN: aap.prod.spg
+  AAP_REMOTE_IP: 192.168.122.84
+  AAP_INSTALLER_SSH_KEY: /home/sgallego/.ssh/id_ed25519
+  AAP_INSTALLER_USER: sgallego
+  AAP_REMOTE_USER: admin
+  INSTALL_SCOPE: remote
+  INVENTORY_GROWTH_USERNAME: admin
+  INVENTORY_GROWTH_PASSWORD: redhat
+  RHSM_PASSWORD: [PRESENT]
+  RH_OFFLINE_TOKEN: [NOT SET]
+  RH_AH_TOKEN: [NOT SET]
+  ROOT_PASSWORD: [PRESENT]
+==================================================\n
+[0;34m[INFO][0m Automated mode: prompting for target selection, then running the full install workflow.
+[0;34m[INFO][0m Full install 1: select installation target
+[0;34m[INFO][0m [INFO] Using verified target: aap.prod.spg (192.168.122.84) Scope: remote
+[0;34m[INFO][0m [INFO] Bootstrapping target host 192.168.122.84 via root@192.168.122.84...
+[0;34m[INFO][0m [OK] Target host 192.168.122.84 bootstrapped successfully.
+[0;34m[INFO][0m Full install 2: bootstrap admin, RHEL repositories, and prerequisite packages
+[0;34m[INFO][0m Remote installation target detected (remote). Skipping local admin user setup.
+[0;34m[INFO][0m Full install 3: prerequisite resource and package checks
+[0;34m[INFO][0m [INFO] Running remote preflight resource checks on target host (aap.prod.spg / 192.168.122.84)...
+[ OK ] Remote Target vCPUs: 4 detected (minimum 4).
+[ OK ] Remote Target RAM: 15 GB detected (minimum 16 GB).
+[ OK ] Remote Target Storage: 45 GB free on / (minimum 40 GB).
+[ OK ] Remote Target podman is available: podman version 5.8.2
+[0;34m[INFO][0m [INFO] Running remote preflight resource checks on target host (aap.prod.spg / 192.168.122.84)...
+[ OK ] Remote Target vCPUs: 4 detected (minimum 4).
+[ OK ] Remote Target RAM: 15 GB detected (minimum 16 GB).
+[ OK ] Remote Target Storage: 45 GB free on / (minimum 40 GB).
+[ OK ] Remote Target podman is available: podman version 5.8.2
+[0;34m[INFO][0m Full install 4: prepare host and relax firewalld/SELinux for installation
+
+PLAY [AAP prework on target host] **********************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [aap.prod.spg]
+
+TASK [Validate target host resource capacity] **********************************
+included: aap27_preflight for aap.prod.spg
+
+TASK [aap27_preflight : Gather hardware and mount facts] ***********************
+ok: [aap.prod.spg]
+
+TASK [aap27_preflight : Resolve requested disk mount] **************************
+ok: [aap.prod.spg]
+
+TASK [aap27_preflight : Validate preflight inputs and facts] *******************
+ok: [aap.prod.spg] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [aap27_preflight : Calculate resource capacity] ***************************
+ok: [aap.prod.spg]
+
+TASK [aap27_preflight : Report resource capacity] ******************************
+ok: [aap.prod.spg] => {
+    "msg": [
+        "CPU: 4 vCPU(s), minimum 4",
+        "RAM: 15 GB, minimum 16 GB",
+        "Disk: 44 GB available on /, minimum 40 GB"
+    ]
+}
+
+TASK [aap27_preflight : Enforce minimum resource capacity] *********************
+skipping: [aap.prod.spg]
+
+TASK [aap27_preflight : Warn when CPU capacity is below minimum] ***************
+skipping: [aap.prod.spg]
+
+TASK [aap27_preflight : Warn when RAM capacity is below minimum] ***************
+ok: [aap.prod.spg] => {
+    "msg": "WARNING: 15 GB RAM is below the configured minimum of 16 GB."
+}
+
+TASK [aap27_preflight : Warn when disk capacity is below minimum] **************
+skipping: [aap.prod.spg]
+
+TASK [Install required packages (best effort)] *********************************
+ok: [aap.prod.spg]
+
+TASK [Ensure common packages are installed (all distros)] **********************
+ok: [aap.prod.spg]
+
+TASK [Enable passwordless sudo for installer user] *****************************
+ok: [aap.prod.spg]
+
+TASK [Ensure system SSH client configuration directory exists] *****************
+ok: [aap.prod.spg]
+
+TASK [Disable SSH host-key checking for installer workflows] *******************
+ok: [aap.prod.spg]
+
+TASK [Configure rootless Podman runtime for installer user] ********************
+included: aap27_rootless_podman for aap.prod.spg
+
+TASK [aap27_rootless_podman : Validate rootless Podman role inputs] ************
+ok: [aap.prod.spg] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [aap27_rootless_podman : Install rootless Podman packages] ****************
+skipping: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Ensure rootless Podman user exists] **************
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Ensure subordinate UID mapping exists] ***********
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Ensure subordinate GID mapping exists] ***********
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Configure maximum user namespaces] ***************
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Resolve rootless Podman user UID] ****************
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Resolve rootless Podman user home] ***************
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Set rootless Podman runtime facts] ***************
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Correct rootless Podman user home ownership] *****
+skipping: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Enable lingering for rootless Podman user] *******
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Ensure rootless Podman user manager is running] ***
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Wait for rootless Podman user DBus socket] *******
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Run rootless Podman storage migration] ***********
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Enable rootless Podman socket] *******************
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Configure Docker-compatible rootless Podman socket] ***
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Enable rootful Podman socket] ********************
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Check current rootless registry login] ***********
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Login rootless Podman to registry] ***************
+skipping: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Validate rootless Podman runtime] ****************
+ok: [aap.prod.spg]
+
+TASK [aap27_rootless_podman : Report rootless Podman configuration] ************
+ok: [aap.prod.spg] => {
+    "msg": [
+        "Rootless Podman user: admin",
+        "Runtime directory: /run/user/1000",
+        "User socket enabled: True",
+        "Podman validation rc: 0"
+    ]
+}
+
+TASK [Ensure podman temporary directory for image loads exists] ****************
+ok: [aap.prod.spg]
+
+TASK [Disable firewalld for installation] **************************************
+ok: [aap.prod.spg]
+
+TASK [Set runtime SELinux permissive] ******************************************
+ok: [aap.prod.spg]
+
+TASK [Set SELinux config permissive] *******************************************
+ok: [aap.prod.spg]
+
+PLAY [Ensure `sshpass` on installer (local control host)] **********************
+
+TASK [Ensure `sshpass` and podman are installed on installer host] *************
+ok: [localhost]
+
+PLAY RECAP *********************************************************************
+aap.prod.spg               : ok=36   changed=0    unreachable=0    failed=0    skipped=6    rescued=0    ignored=0   
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[0;34m[INFO][0m Full install 5: configure target host identity
+[0;34m[INFO][0m Configuring host identity on admin@192.168.122.84 as aap.prod.spg.
+
+PLAY [Configure host identity for AAP install] *********************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [aap.prod.spg]
+
+TASK [Set hostname to target FQDN] *********************************************
+ok: [aap.prod.spg]
+
+TASK [Compute primary IP] ******************************************************
+ok: [aap.prod.spg]
+
+TASK [Ensure /etc/hosts entry with aap alias] **********************************
+ok: [aap.prod.spg]
+
+TASK [Ensure admin user exists] ************************************************
+ok: [aap.prod.spg]
+
+TASK [Set admin password when provided] ****************************************
+skipping: [aap.prod.spg]
+
+TASK [Configure passwordless sudo for admin] ***********************************
+changed: [aap.prod.spg]
+
+TASK [Ensure admin .ssh dir exists] ********************************************
+ok: [aap.prod.spg]
+
+TASK [Generate admin ssh key if missing] ***************************************
+ok: [aap.prod.spg]
+
+PLAY RECAP *********************************************************************
+aap.prod.spg               : ok=8    changed=1    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   
+
+[0;34m[INFO][0m Full install 6: capture credentials and tokens
+[0;34m[INFO][0m [OK] Step 6: Credentials and tokens verified.
+[0;34m[INFO][0m Full install 7: download and extract the AAP bundle
+
+PLAY [Download AAP bundle to target host] **************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [aap.prod.spg]
+
+TASK [Ensure platform download directory exists] *******************************
+ok: [aap.prod.spg]
+
+TASK [Check persisted bundle directory marker] *********************************
+ok: [aap.prod.spg]
+
+TASK [Read persisted bundle directory marker] **********************************
+ok: [aap.prod.spg]
+
+TASK [Resolve persisted bundle directory] **************************************
+ok: [aap.prod.spg]
+
+TASK [Check persisted extracted bundle] ****************************************
+ok: [aap.prod.spg]
+
+TASK [Set bundle readiness] ****************************************************
+ok: [aap.prod.spg]
+
+TASK [Copy controller-local bundle to target] **********************************
+skipping: [aap.prod.spg]
+
+TASK [Download bundle file on target] ******************************************
+skipping: [aap.prod.spg]
+
+TASK [Detect bundle archive root directory] ************************************
+skipping: [aap.prod.spg]
+
+TASK [Resolve effective bundle root directory] *********************************
+ok: [aap.prod.spg]
+
+TASK [Validate bundle archive root directory] **********************************
+ok: [aap.prod.spg] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Extract bundle] **********************************************************
+skipping: [aap.prod.spg]
+
+TASK [Persist detected bundle directory for controller workflows] **************
+ok: [aap.prod.spg]
+
+TASK [Remove compressed bundle archive after extraction] ***********************
+ok: [aap.prod.spg]
+
+PLAY RECAP *********************************************************************
+aap.prod.spg               : ok=11   changed=0    unreachable=0    failed=0    skipped=4    rescued=0    ignored=0   
+
+[0;32m[ OK ][0m Remote bundle ready at admin@192.168.122.84:/home/admin/Downloads/ansible-automation-platform-containerized-setup-bundle-2.7-4-x86_64.
+[0;34m[INFO][0m Full install 8: verify extracted bundle
+[0;32m[ OK ][0m Remote bundle already extracted at admin@192.168.122.84:/home/admin/Downloads/ansible-automation-platform-containerized-setup-bundle-2.7-4-x86_64.
+[0;34m[INFO][0m Full install 9: prepare inventory-growth
+
+PLAY [Prepare target-local inventory-growth] ***********************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [aap.prod.spg]
+
+TASK [Apply inventory-growth role] *********************************************
+included: aap27_inventory_growth for aap.prod.spg
+
+TASK [aap27_inventory_growth : Validate inventory-growth inputs] ***************
+ok: [aap.prod.spg] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [aap27_inventory_growth : Check inventory-growth exists] ******************
+ok: [aap.prod.spg]
+
+TASK [aap27_inventory_growth : Require inventory-growth file] ******************
+ok: [aap.prod.spg] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [aap27_inventory_growth : Preserve original inventory-growth once] ********
+ok: [aap.prod.spg]
+
+TASK [aap27_inventory_growth : Replace example hostnames] **********************
+ok: [aap.prod.spg]
+
+TASK [aap27_inventory_growth : Normalize component host lines for target-local execution] ***
+ok: [aap.prod.spg]
+
+TASK [aap27_inventory_growth : Replace admin password template references] *****
+[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.replace' failed: Error while resolving value for 'replace': 'ADMIN_PASSWORD' is undefined
+
+Task failed.
+Origin: /run/media/sgallego/SD_Card/GIT/Ansible_2.7_install/roles/aap27_inventory_growth/tasks/main.yml:47:3
+
+45       {{ aap27_inventory_growth_target_fqdn }} ansible_host={{ aap27_inventory_growth_target_address }}
+46
+47 - name: Replace admin password template references
+     ^ column 3
+
+<<< caused by >>>
+
+Finalization of task args for 'ansible.builtin.replace' failed.
+Origin: /run/media/sgallego/SD_Card/GIT/Ansible_2.7_install/roles/aap27_inventory_growth/tasks/main.yml:48:3
+
+46
+47 - name: Replace admin password template references
+48   ansible.builtin.replace:
+     ^ column 3
+
+<<< caused by >>>
+
+Error while resolving value for 'replace'.
+Origin: /run/media/sgallego/SD_Card/GIT/Ansible_2.7_install/roles/aap27_inventory_growth/tasks/main.yml:51:14
+
+49     path: "{{ aap27_inventory_growth_file }}"
+50     regexp: '\{\{[ ]*ADMIN_PASSWORD[ ]*\}\}'
+51     replace: "{{ aap27_inventory_growth_admin_password }}"
+                ^ column 14
+
+<<< caused by >>>
+
+'ADMIN_PASSWORD' is undefined
+Origin: /run/media/sgallego/SD_Card/GIT/Ansible_2.7_install/aap_workflow_project/playbooks/prepare_inventory_growth.yml:18:48
+
+16         aap27_inventory_growth_admin_user: "{{ admin_user | default('admin') }}"
+17         aap27_inventory_growth_admin_home: "{{ admin_home | default('/home/' ~ (admin_user | default('admin'))) }}"
+18         aap27_inventory_growth_admin_password: "{{ ADMIN_PASSWORD }}"
+                                                  ^ column 48
+
+fatal: [aap.prod.spg]: FAILED! => {"changed": false, "msg": "Task failed: Finalization of task args for 'ansible.builtin.replace' failed: Error while resolving value for 'replace': 'ADMIN_PASSWORD' is undefined"}
+
+PLAY RECAP *********************************************************************
+aap.prod.spg               : ok=8    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
+[0;31m[ERR ][0m Remote inventory-growth preparation failed on admin@192.168.122.84.

@@ -5,10 +5,10 @@
   gather_facts: true
 
   vars:
-    effective_target_fqdn: "{{ target_fqdn | default(default_fqdn) }}"
-    platform_admin_user: "{{ admin_user | default('admin') }}"
-    platform_admin_home: "{{ admin_home | default('/home/' ~ platform_admin_user) }}"
-    effective_admin_password: "{{ admin_password | default('') }}"
+    effective_target_fqdn: "{{ AAP_CONTROLLER_FQDN }}"
+    platform_admin_user: "{{ ADMIN_USER | default('admin') }}"
+    platform_admin_home: "{{ ADMIN_HOME | default('/home/' ~ platform_admin_user) }}"
+    effective_admin_password: "{{ ADMIN_PASSWORD | default('') }}"
 
   tasks:
     - name: Set hostname to target FQDN
@@ -17,7 +17,7 @@
 
     - name: Compute primary IP
       ansible.builtin.set_fact:
-        primary_ip: "{{ ansible_default_ipv4.address | default((ansible_all_ipv4_addresses | first), true) }}"
+        primary_ip: "{{ ansible_facts['default_ipv4'].address | default((ansible_facts['all_ipv4_addresses'] | first), true) }}"
 
     - name: Ensure /etc/hosts entry with aap alias
       ansible.builtin.lineinfile:
@@ -38,7 +38,7 @@
       ansible.builtin.user:
         name: "{{ platform_admin_user }}"
         password: "{{ effective_admin_password | password_hash('sha512') }}"
-      no_log: true
+      no_log: false
       when: effective_admin_password | length > 0
 
     - name: Configure passwordless sudo for admin

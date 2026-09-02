@@ -183,23 +183,23 @@
   block:
     - name: Stat internal CA certificate
       ansible.builtin.stat:
-        path: "{{ platform_admin_home }}/aap/tls/ca.cert"
+        path: "{{ aap27_bundle_hotfixes_platform_admin_home }}/aap/tls/ca.cert"
       register: aap27_bundle_hotfixes_ca_stat
 
     - name: Stat extracted TLS trust bundle
       ansible.builtin.stat:
-        path: "{{ platform_admin_home }}/aap/tls/extracted/pem/tls-ca-bundle.pem"
+        path: "{{ aap27_bundle_hotfixes_platform_admin_home }}/aap/tls/extracted/pem/tls-ca-bundle.pem"
       register: aap27_bundle_hotfixes_ca_bundle_stat
 
     - name: Slurp internal CA certificate
       ansible.builtin.slurp:
-        src: "{{ platform_admin_home }}/aap/tls/ca.cert"
+        src: "{{ aap27_bundle_hotfixes_platform_admin_home }}/aap/tls/ca.cert"
       register: aap27_bundle_hotfixes_ca_slurp
       when: aap27_bundle_hotfixes_ca_stat.stat.exists | default(false)
 
     - name: Ensure internal CA is present in the extracted trust bundle
       ansible.builtin.blockinfile:
-        path: "{{ platform_admin_home }}/aap/tls/extracted/pem/tls-ca-bundle.pem"
+        path: "{{ aap27_bundle_hotfixes_platform_admin_home }}/aap/tls/extracted/pem/tls-ca-bundle.pem"
         marker: "# {mark} AAP27 INTERNAL CA HOTFIX"
         block: "{{ aap27_bundle_hotfixes_ca_slurp.content | b64decode }}"
       when: >-

@@ -5,15 +5,15 @@
   gather_facts: true
 
   vars:
-    prework_disable_firewall: "{{ disable_firewall_for_install | default(false) }}"
-    prework_set_selinux_permissive: "{{ set_selinux_permissive_for_install | default(false) }}"
-    effective_registry_username: "{{ rhsm_username | default(registry_username | default('')) }}"
-    effective_registry_password: "{{ rhsm_password | default(registry_password | default('')) }}"
-    installer_user: "{{ remote_user | default(machine_credential_username | default('admin')) }}"
-    preflight_min_cpu: "{{ min_cpu | default(4) }}"
-    preflight_min_ram_gb: "{{ min_ram_gb | default(16) }}"
-    preflight_min_disk_gb: "{{ min_disk_gb | default(40) }}"
-    preflight_fail_on_insufficient: "{{ fail_on_insufficient_resources | default(false) }}"
+    prework_disable_firewall: "{{ DISABLE_FIREWALL_FOR_INSTALL | default(false) }}"
+    prework_set_selinux_permissive: "{{ SET_SELINUX_PERMISSIVE_FOR_INSTALL | default(false) }}"
+    effective_registry_username: "{{ RHSM_USERNAME | default('') }}"
+    effective_registry_password: "{{ RHSM_PASSWORD | default('') }}"
+    installer_user: "{{ AAP_REMOTE_USER | default(MACHINE_CREDENTIAL_USERNAME | default('admin')) }}"
+    preflight_min_cpu: "{{ AAP_MIN_CPU | default(4) }}"
+    preflight_min_ram_gb: "{{ AAP_MIN_RAM_GB | default(16) }}"
+    preflight_min_disk_gb: "{{ AAP_MIN_DISK_GB | default(40) }}"
+    preflight_fail_on_insufficient: "{{ FAIL_ON_INSUFFICIENT_RESOURCES | default(false) }}"
 
   handlers:
     - name: Restart SSH service
@@ -50,7 +50,7 @@
           - python3
           - python3-pip
         state: present
-      when: ansible_os_family == "RedHat"
+      when: ansible_facts['os_family'] == "RedHat"
 
     - name: Ensure common packages are installed (all distros)
       ansible.builtin.package:

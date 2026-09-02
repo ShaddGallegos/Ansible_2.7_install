@@ -9,7 +9,8 @@ the vault password continue to work.
 - The file has a `common:` section (values shared by any project) and one
   section per project (keyed by `aap27_defaults_project_key`, default
   `Ansible_2.7_install`); project keys override `common` on collision.
-- The complete non-secret variable schema is in `vars/env.yml.example`.
+- The complete non-secret variable schema is in `templates/env.yml.example` at
+	the repository root.
 - The vault password file is expected at `~/.ansible/conf/.vaultpass.txt` and
   is created once and reused across all projects (never recreated).
 - Set `aap27_defaults_use_local_env: true` when invoking this

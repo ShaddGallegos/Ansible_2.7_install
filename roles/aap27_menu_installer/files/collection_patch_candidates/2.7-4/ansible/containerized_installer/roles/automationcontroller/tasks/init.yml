@@ -278,7 +278,7 @@
     volume: '{{ _common_volumes }}'
   register: _superuser_password
   changed_when: "'Password updated' in _superuser_password.stdout"
-  no_log: true
+  no_log: false
   run_once: true
   retries: 5
   delay: 60

@@ -3,6 +3,20 @@
 Notable changes to `aap27_installer.sh` and the surrounding project
 structure. Newest first.
 
+## 2026-09-01
+
+### Refactor and cleanup
+- Removed the `scripts/` directory and legacy `run_install_aap.sh` wrapper.
+  These were unreferenced one-time repair generators whose behavior is now
+  implemented and tested in `aap27_installer.sh`, `lib/`, and first-party
+  Ansible roles/playbooks.
+- Extracted full-install sequencing into `lib/workflow.sh` and consolidated
+  credential/state handling in `lib/state.sh`.
+- Standardized canonical project configuration on uppercase keys under
+  `ANSIBLE_2.7_INSTALL` in the Vault-encrypted `~/.ansible/conf/env.yml`.
+- Added `templates/env.yml.example` as the single non-secret state schema and
+  separated the supported Ansible 2.16 runtime from development lint tooling.
+
 ## 2026-08-14
 
 ### Repo structure
