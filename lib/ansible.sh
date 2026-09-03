@@ -66,9 +66,36 @@ run_project_playbook() {
   [[ -f "${inventory}" ]] || { err "Generated inventory not found: ${inventory}"; return 1; }
   [[ -f "${playbook}" ]] || { err "Project playbook not found: ${playbook}"; return 1; }
 
-  command=("${ansible_playbook}" -i "${inventory}" "${playbook}")
+  # Ensure vault password file exists (create if missing) so playbooks can
+  # encrypt/decrypt the shared env.yml without interactive prompts.
+  if [[ -n "${VAULT_PASS_FILE:-}" ]]; then
+    vault_dir="$(dirname "${VAULT_PASS_FILE}")"
+    if [[ ! -d "${vault_dir}" ]]; then
+      mkdir -p "${vault_dir}" && chmod 700 "${vault_dir}" || true
+    fi
+    if [[ ! -f "${VAULT_PASS_FILE}" ]]; then
+      # Create a random 32-char alphanumeric vault password
+      head -c 256 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 32 > "${VAULT_PASS_FILE}" || true
+      chmod 600 "${VAULT_PASS_FILE}" || true
+      log "Created vault password file: ${VAULT_PASS_FILE}"
+    fi
+  fi
+
+  command=("${ansible_playbook}" -i "${inventory}")
+
+  # Include repository-wide env file if present
+  if [[ -n "${ENV_FILE:-}" && -f "${ENV_FILE}" ]]; then
+    command+=(--extra-vars "@${ENV_FILE}")
+  fi
+
+  # Pass vault password file when available to allow decrypting encrypted vars
+  if [[ -n "${VAULT_PASS_FILE:-}" && -f "${VAULT_PASS_FILE}" ]]; then
+    command+=(--vault-password-file "${VAULT_PASS_FILE}")
+  fi
+
+  command+=("${playbook}")
   if [[ -n "${extra_vars_file}" ]]; then
-    command+=(-e "@${extra_vars_file}")
+    command+=(--extra-vars "@${extra_vars_file}")
   fi
 
   (

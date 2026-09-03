@@ -8,8 +8,8 @@
     platform_admin_user: "{{ ADMIN_USER | default('admin') }}"
     platform_admin_home: "{{ ADMIN_HOME | default('/home/' ~ platform_admin_user) }}"
     admin_download_dir: "{{ platform_admin_home }}/Downloads"
-    effective_bundle_url: "{{ BUNDLE_URL }}"
-    effective_bundle_file: "{{ BUNDLE_FILE }}"
+    effective_bundle_url: "{{ BUNDLE_URL | default('') }}"
+    effective_bundle_file: "{{ BUNDLE_FILE | default('') }}"
     effective_local_bundle_path: "{{ LOCAL_BUNDLE_PATH | default('') }}"
     effective_rhsm_username: "{{ RHSM_USERNAME | default('') }}"
     effective_rhsm_password: "{{ RHSM_PASSWORD | default('') }}"
@@ -53,6 +53,74 @@
           {{ (persisted_bundle_root | length > 0) and
              (persisted_bundle_inventory.stat.exists | default(false)) }}
 
+    - name: Discover latest AAP bundle URL from Red Hat when not provided
+      ansible.builtin.shell:
+        cmd: >-
+          set -eu
+          page_url=https://access.redhat.com/downloads/content/480/ver=2.7/rhel---10/2.7/x86_64/product-software
+          # fetch product page and extract CDN links that look like the containerized bundle
+          curl -fsSL "$page_url" 2>/dev/null |
+            grep -Eo "https?://[^\"']+ansible-automation-platform-containerized-setup-bundle-[^\"']+\.tar\.gz[^\"']*" | head -n1 || true
+      register: discovered_bundle_url
+      delegate_to: localhost
+      changed_when: false
+      when:
+        - (BUNDLE_URL is not defined) or (BUNDLE_URL | default('') == '')
+      # do not fail the play when discovery fails; fallback logic will handle missing values
+
+    - name: Set effective_bundle_url from discovered URL when BUNDLE_URL missing
+      ansible.builtin.set_fact:
+        effective_bundle_url: "{{ discovered_bundle_url.stdout }}"
+      when:
+        - (effective_bundle_url | default('') | length) == 0
+        - (discovered_bundle_url.stdout | default('') | length) > 0
+
+    - name: Compute effective_bundle_file from effective_bundle_url when missing
+      ansible.builtin.shell:
+        cmd: >-
+          # strip query string and print basename
+          url="{{ effective_bundle_url | default('') }}"
+          if [[ -z "$url" ]]; then exit 0; fi
+          u=${url%%\?*}
+          basename "$u"
+      register: computed_bundle_file
+      delegate_to: localhost
+      changed_when: false
+      when:
+        - (effective_bundle_file | default('') | length) == 0
+        - (effective_bundle_url | default('') | length) > 0
+
+    - name: Set effective_bundle_file fact from computed value
+      ansible.builtin.set_fact:
+        effective_bundle_file: "{{ computed_bundle_file.stdout }}"
+      when:
+        - (effective_bundle_file | default('') | length) == 0
+        - (computed_bundle_file.stdout | default('') | length) > 0
+
+    - name: If LOCAL_BUNDLE_PATH not provided, search installer's ~/Downloads for latest bundle
+      ansible.builtin.shell:
+        cmd: >-
+          set -eu
+          # look for typical bundle name patterns in the current user's Downloads
+          d="$HOME/Downloads"
+          if [[ ! -d "$d" ]]; then exit 0; fi
+          # prefer tar.gz/tgz/tar/xz bundles matching bundle prefix
+          find "$d" -maxdepth 1 -type f \( -name "ansible-automation-platform-containerized-setup-bundle-*" -o -name "*ansible-automation-platform*tar*" \) -print0 | xargs -0 ls -1t 2>/dev/null | head -n1 || true
+      register: local_bundle_candidate
+      delegate_to: localhost
+      changed_when: false
+      when:
+        - effective_local_bundle_path | length == 0
+        - not bundle_already_ready | bool
+
+    - name: Set effective_local_bundle_path from installer Downloads when found
+      ansible.builtin.set_fact:
+        effective_local_bundle_path: "{{ local_bundle_candidate.stdout }}"
+      when:
+        - effective_local_bundle_path | length == 0
+        - (local_bundle_candidate.stdout | default('')) | length > 0
+      # do not delegate this set_fact - keep the fact on the controller host
+
     - name: Copy controller-local bundle to target
       ansible.builtin.copy:
         src: "{{ effective_local_bundle_path }}"
@@ -78,51 +146,392 @@
       when:
         - not bundle_already_ready | bool
         - effective_local_bundle_path | length == 0
+        - (effective_bundle_url | default('') | length) > 0
 
-    - name: Detect bundle archive root directory
+    - name: Basic sanity check for downloaded archive
       ansible.builtin.shell:
         cmd: >-
-          set -o pipefail;
-          tar -tf {{ (admin_download_dir ~ '/' ~ effective_bundle_file) | quote }} |
-          awk -F/ 'NR == 1 { root = $1 } END { print root }'
-        executable: /bin/bash
-      register: detected_bundle_root
+          f={{ admin_download_dir ~ '/' ~ effective_bundle_file }};
+          # fail early if file is empty
+          if [[ ! -s "$f" ]]; then
+            echo "empty"; exit 0
+          fi
+          # detect obvious HTML or text error payloads
+          head -c 512 "$f" | tr -d '\\0' | awk 'BEGIN{IGNORECASE=1} /<html|<head|<title|nginx|404 Not Found/{print "html"; exit 0}' || true
+      register: bundle_sanity
+      changed_when: false
+      failed_when: false
+      when: not bundle_already_ready | bool
+
+    - name: Retry download with curl if get_url produced an HTML payload
+      ansible.builtin.shell:
+        cmd: >-
+          set -euxo pipefail;
+          f="{{ admin_download_dir }}/{{ effective_bundle_file }}";
+          url="{{ effective_bundle_url }}";
+          user="{{ effective_rhsm_username if effective_rhsm_username | length > 0 else '' }}";
+          pass="{{ effective_rhsm_password if effective_rhsm_password | length > 0 else '' }}";
+          if head -c 512 "$f" | tr -d '\\0' | awk 'BEGIN{IGNORECASE=1} /<html|<head|<title|nginx|404 Not Found/{exit 0} {exit 1}'; then
+            # try curl with auth if provided, otherwise simple curl
+            if [[ -n "$user" ]]; then
+              curl -fSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 300 --user "$user:$pass" -o "$f" "$url"
+            else
+              curl -fSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 300 -o "$f" "$url"
+            fi
+          fi
+      register: curl_retry
+      changed_when: curl_retry.rc == 0 and (curl_retry.stdout | default('') | length > 0)
+      failed_when: false
+      when: not bundle_already_ready | bool
+
+    - name: Re-run basic sanity check after curl retry
+      ansible.builtin.shell:
+        cmd: >-
+          f={{ admin_download_dir ~ '/' ~ effective_bundle_file }};
+          if [[ ! -s "$f" ]]; then echo empty; exit 0; fi;
+          head -c 512 "$f" | tr -d '\\0' | awk 'BEGIN{IGNORECASE=1} /<html|<head|<title|nginx|404 Not Found/{print "html"; exit 0} {exit 1}' || true
+      register: bundle_sanity_after_curl
+      changed_when: false
+      failed_when: false
+      when: not bundle_already_ready | bool
+
+    - name: Fail early if downloaded file still looks like an HTML error page or empty
+      ansible.builtin.fail:
+        msg: >-
+          Downloaded bundle appears to be an HTML error page or empty file: {{ admin_download_dir }}/{{ effective_bundle_file }}.
+          Consider providing a local bundle via `LOCAL_BUNDLE_PATH`, or set `BUNDLE_SHA256` to verify the file, or check network/credential access to {{ effective_bundle_url }}.
+      when: ((bundle_sanity.stdout | default('')) is search('html') or (bundle_sanity.stdout | default('')) is search('empty')) and
+            ((bundle_sanity_after_curl.stdout | default('')) is search('html') or (bundle_sanity_after_curl.stdout | default('')) is search('empty')) and
+            (effective_local_bundle_path | default('') | length) == 0
+
+    - name: Copy installer-local bundle to target when download produced HTML and installer has local copy
+      ansible.builtin.copy:
+        src: "{{ effective_local_bundle_path }}"
+        dest: "{{ admin_download_dir }}/{{ effective_bundle_file }}"
+        mode: "0644"
+        owner: "{{ platform_admin_user }}"
+        group: "{{ platform_admin_user }}"
+      when: ((bundle_sanity.stdout | default('')) is search('html') or (bundle_sanity.stdout | default('')) is search('empty')) and
+            ((bundle_sanity_after_curl.stdout | default('')) is search('html') or (bundle_sanity_after_curl.stdout | default('')) is search('empty')) and
+            (effective_local_bundle_path | default('') | length) > 0
+
+    - name: Fail if no bundle source could be determined
+      ansible.builtin.fail:
+        msg: >-
+          No bundle URL was discovered and no installer-local bundle was found. Provide `BUNDLE_URL` and optionally `BUNDLE_FILE`,
+          or place the bundle in the installer's `~/Downloads/` and re-run with `LOCAL_BUNDLE_PATH`.
+      when:
+        - not bundle_already_ready | bool
+        - (effective_bundle_url | default('') | length) == 0
+        - (effective_local_bundle_path | default('') | length) == 0
+
+    - name: Optionally verify bundle SHA256 when provided
+      ansible.builtin.shell:
+        cmd: >-
+          sha256sum {{ admin_download_dir }}/{{ effective_bundle_file }} | awk '{print $1}'
+      register: bundle_sha256
+      changed_when: false
+      failed_when: false
+      when: (BUNDLE_SHA256 is defined) and not bundle_already_ready | bool
+
+    - name: Assert bundle checksum matches expected
+      ansible.builtin.assert:
+        that:
+          - bundle_sha256.stdout == (BUNDLE_SHA256 | default(''))
+        fail_msg: "Downloaded bundle SHA256 does not match BUNDLE_SHA256"
+      when: (BUNDLE_SHA256 is defined) and not bundle_already_ready | bool
+
+    - name: Create temporary extraction directory
+      ansible.builtin.shell:
+        cmd: mktemp -d "{{ admin_download_dir }}/bundle_extract.XXXX"
+      register: tmp_extract_dir_raw
+      changed_when: true
+      when: not bundle_already_ready | bool
+
+    - name: Set tmp_extract_dir fact
+      ansible.builtin.set_fact:
+        tmp_extract_dir: "{{ tmp_extract_dir_raw.stdout }}"
+      when: not bundle_already_ready | bool
+
+    - name: Ensure core archive utilities are available on target for extraction
+      ansible.builtin.package:
+        name:
+          - tar
+          - gzip
+          - bzip2
+          - xz
+          - unzip
+        state: present
+      when: not bundle_already_ready | bool
+
+    - name: Attempt to install optional archive utilities (p7zip)
+      ansible.builtin.package:
+        name: p7zip
+        state: present
+      register: p7zip_install
+      failed_when: false
+      when: not bundle_already_ready | bool
+
+    - name: Attempt to install optional archive utilities (zstd)
+      ansible.builtin.package:
+        name: zstd
+        state: present
+      register: zstd_install
+      failed_when: false
+      when: not bundle_already_ready | bool
+
+    - block:
+      - name: Try extraction using ansible unarchive
+        ansible.builtin.unarchive:
+          src: "{{ admin_download_dir }}/{{ effective_bundle_file }}"
+          dest: "{{ tmp_extract_dir }}"
+          remote_src: true
+          owner: "{{ platform_admin_user }}"
+          group: "{{ platform_admin_user }}"
+        when: not bundle_already_ready | bool
+      rescue:
+      - name: Inspect archive file type for manual extraction
+        ansible.builtin.shell:
+          cmd: >-
+            file -b "{{ admin_download_dir }}/{{ effective_bundle_file }}" || true
+        register: archive_file_type
+        changed_when: false
+      - name: Attempt manual extraction based on detected type
+        ansible.builtin.shell:
+          cmd: >-
+            set -euxo pipefail
+            f="{{ admin_download_dir }}/{{ effective_bundle_file }}"
+            tmp="{{ tmp_extract_dir }}"
+            # try common extraction commands, stop on success
+            if command -v bsdtar >/dev/null 2>&1; then
+              bsdtar -xf "$f" -C "$tmp" && exit 0 || true
+            fi
+            # try 7z (p7zip) for uncommon/compressed containers
+            if command -v 7z >/dev/null 2>&1; then
+              7z x -y "$f" -o"$tmp" && exit 0 || true
+            fi
+            if file -b "$f" | grep -qi gzip || echo "$f" | grep -qiE '\.gz$|\.tgz$'; then
+              tar -xzf "$f" -C "$tmp" && exit 0 || true
+            fi
+            if file -b "$f" | grep -qi xz || echo "$f" | grep -qiE '\.xz$'; then
+              tar -xJf "$f" -C "$tmp" && exit 0 || true
+            fi
+            if file -b "$f" | grep -qi bzip2 || echo "$f" | grep -qiE '\.bz2$|\.bzip2$'; then
+              tar -xjf "$f" -C "$tmp" && exit 0 || true
+            fi
+            if file -b "$f" | grep -qi zip || echo "$f" | grep -qiE '\.zip$'; then
+              unzip -q "$f" -d "$tmp" && exit 0 || true
+            fi
+            # try zstd if available
+            if command -v zstd >/dev/null 2>&1; then
+              # try to detect zstd-compressed tar (tar.zst)
+              if file -b "$f" | grep -qi zstd || echo "$f" | grep -qiE '\.zst$|\.zstd$'; then
+                # attempt to decompress to stdout and pipe to tar
+                zstd -d --stdout "$f" | tar -xf - -C "$tmp" && exit 0 || true
+              fi
+            fi
+            # final fallback try plain tar
+            tar -xf "$f" -C "$tmp" || true
+        register: manual_extract
+        failed_when: false
+      always:
+      - name: Debug extraction results when no files found
+        ansible.builtin.shell:
+          cmd: >-
+            if [ -z "$(ls -A {{ tmp_extract_dir }} 2>/dev/null)" ]; then
+              echo "NO_FILES"; file -b "{{ admin_download_dir }}/{{ effective_bundle_file }}" || true; ls -l "{{ admin_download_dir }}" || true
+            else
+              echo "FILES_EXIST"
+            fi
+        register: extract_debug
+        changed_when: false
+      when: not bundle_already_ready | bool
+
+    - name: Locate inventory-growth inside extracted tree
+      ansible.builtin.shell:
+        cmd: >-
+          set -eu
+          f="{{ tmp_extract_dir }}"
+          inv=$(find "$f" -type f -name inventory-growth -print -quit || true)
+          if [[ -z "$inv" ]]; then
+            exit 0
+          fi
+          # compute path relative to tmp_extract_dir
+          rel=${inv#"$f"/}
+          # if the file is at top-level (no slash in rel), indicate ROOT
+          if [[ "$rel" == "$inv" ]]; then
+            echo ""; exit 0
+          fi
+          top=${rel%%/*}
+          if [[ "$top" == "" ]]; then
+            echo ""; exit 0
+          fi
+          echo "$top"
+      register: found_bundle_top
+      changed_when: false
+      failed_when: false
+      when: not bundle_already_ready | bool
+
+    - name: Determine final bundle directory name when inventory-growth is at top-level
+      ansible.builtin.shell:
+        cmd: >-
+          bn=$(basename "{{ effective_bundle_file }}")
+          bn=${bn%.tar.gz}; bn=${bn%.tgz}; bn=${bn%.tar}; bn=${bn%.zip}
+          echo "$bn"
+      register: fallback_bundle_name
       changed_when: false
       when: not bundle_already_ready | bool
 
-    - name: Resolve effective bundle root directory
-      ansible.builtin.set_fact:
-        effective_bundle_root: >-
-          {{ persisted_bundle_root if bundle_already_ready | bool
-             else detected_bundle_root.stdout }}
-
-    - name: Validate bundle archive root directory
-      ansible.builtin.assert:
-        that:
-          - effective_bundle_root | length > 0
-          - effective_bundle_root is match('^ansible-automation-platform-containerized-setup-bundle-[A-Za-z0-9._-]+$')
-        fail_msg: The downloaded archive does not contain a recognized AAP setup bundle root directory.
-
-    - name: Extract bundle
-      ansible.builtin.unarchive:
-        src: "{{ admin_download_dir }}/{{ effective_bundle_file }}"
-        dest: "{{ admin_download_dir }}"
-        remote_src: true
-        owner: "{{ platform_admin_user }}"
-        group: "{{ platform_admin_user }}"
-        creates: "{{ admin_download_dir }}/{{ effective_bundle_root }}/inventory-growth"
+    - name: Move discovered bundle directory into admin Downloads
+      ansible.builtin.shell:
+        cmd: |
+          set -euxo pipefail
+          tmp="{{ tmp_extract_dir }}"
+          dest_dir="{{ admin_download_dir }}"
+          user="{{ platform_admin_user }}"
+          top="{{ found_bundle_top.stdout }}"
+          if [[ -n "$top" ]]; then
+            # move the identified top-level directory
+            mv "$tmp/$top" "$dest_dir/"
+            chown -R "$user:$user" "$dest_dir/$top"
+            echo "$top"
+            exit 0
+          fi
+          # fallback: inventory-growth was at the extraction root or not found; move all contents into a named bundle dir
+          bn="{{ fallback_bundle_name.stdout }}"
+          mkdir -p "$dest_dir/$bn"
+          # move only when files exist
+          if [ -n "$(ls -A "$tmp" 2>/dev/null)" ]; then
+            mv "$tmp"/* "$dest_dir/$bn/" || true
+          fi
+          chown -R "$user:$user" "$dest_dir/$bn"
+          echo "$bn"
+      register: moved_bundle_name
       when: not bundle_already_ready | bool
 
     - name: Persist detected bundle directory for controller workflows
+      ansible.builtin.copy:
+        dest: "{{ admin_download_dir }}/.aap27_bundle_dir"
+        content: "{{ moved_bundle_name.stdout }}\n"
+        owner: "{{ platform_admin_user }}"
+        group: "{{ platform_admin_user }}"
+        mode: "0600"
+      when: not bundle_already_ready | bool
+
+    - name: Check for inventory-growth inside the moved bundle directory
+      ansible.builtin.stat:
+        path: "{{ admin_download_dir }}/{{ moved_bundle_name.stdout }}/inventory-growth"
+      register: moved_bundle_inventory
+      when: not bundle_already_ready | bool
+
+    - name: Search for inventory-growth anywhere under admin Downloads if not found in moved bundle
+      ansible.builtin.shell:
+        cmd: >-
+          find "{{ admin_download_dir }}" -type f -name inventory-growth -print -quit || true
+      register: located_inventory
+      changed_when: false
+      failed_when: false
+      when:
+        - not bundle_already_ready | bool
+        - not moved_bundle_inventory.stat.exists | default(false)
+    - name: Diagnostic inspect moved bundle when inventory-growth missing
+      ansible.builtin.shell:
+        cmd: |
+          d="{{ admin_download_dir }}/{{ moved_bundle_name.stdout }}"
+          echo "--- LIST $d ---"
+          if [[ -d "$d" ]]; then
+            ls -la "$d"
+            echo "--- RECURSIVE (head) $d ---"
+            ls -laR "$d" | sed -n '1,200p'
+          else
+            echo "NO_DIR"
+          fi
+          echo "--- SEARCH inventory* under Downloads ---"
+          find "{{ admin_download_dir }}" -maxdepth 4 -type f -iname "*inventory*" -print | sed -n '1,200p' || true
+      register: bundle_inspect
+      changed_when: false
+      failed_when: false
+      when:
+        - not bundle_already_ready | bool
+        - not moved_bundle_inventory.stat.exists | default(false)
+
+    - name: Diagnostic output for bundle inspection
+      ansible.builtin.debug:
+        var: bundle_inspect.stdout_lines
+      when:
+        - not bundle_already_ready | bool
+        - not moved_bundle_inventory.stat.exists | default(false)
+
+    - name: Compute and persist effective bundle root (moved, located, or fallback)
+      ansible.builtin.shell:
+        cmd: |
+          set -eu
+          # if moved bundle already contains inventory-growth, prefer it
+          if {{ moved_bundle_inventory.stat.exists | default(false) | ternary('true','false') }}; then
+            echo "{{ moved_bundle_name.stdout }}"; exit 0
+          fi
+          # if we located an inventory file elsewhere under Downloads, derive its top-level dir
+          p="{{ located_inventory.stdout | default('') }}"
+          if [[ -n "$p" ]]; then
+            prefix={{ admin_download_dir }}
+            rel=${p#${prefix}/}
+            echo "${rel%%/*}"; exit 0
+          fi
+          # fallback to bundle file base name
+          echo "{{ fallback_bundle_name.stdout }}"
+      register: final_bundle_root
+      changed_when: false
+      when: not bundle_already_ready | bool
+
+    - name: Set effective_bundle_root fact from computed value
+      ansible.builtin.set_fact:
+        effective_bundle_root: "{{ final_bundle_root.stdout | default('') }}"
+      when: not bundle_already_ready | bool
+
+    - name: Validate effective_bundle_root was computed
+      ansible.builtin.assert:
+        that:
+          - effective_bundle_root | length > 0
+        fail_msg: >-
+          Could not compute an effective bundle root under {{ admin_download_dir }}.
+          Consider providing a valid bundle via LOCAL_BUNDLE_PATH or verifying the bundle archive.
+      when: not bundle_already_ready | bool
+
+    - name: Search for inventory-growth under computed bundle root (recursive)
+      ansible.builtin.shell:
+        cmd: >-
+          find "{{ admin_download_dir }}/{{ effective_bundle_root }}" -type f -name inventory-growth -print -quit || true
+      register: inv_find
+      changed_when: false
+      failed_when: false
+      when: not bundle_already_ready | bool
+
+    - name: Fail if inventory-growth not found under computed bundle root
+      ansible.builtin.fail:
+        msg: >-
+          Could not locate 'inventory-growth' anywhere under {{ admin_download_dir }}/{{ effective_bundle_root }}.
+          Consider providing a valid bundle via LOCAL_BUNDLE_PATH or verifying the bundle archive.
+      when:
+        - not bundle_already_ready | bool
+        - inv_find.stdout | default('') == ''
+
+    - name: Persist effective bundle directory for controller workflows (final)
       ansible.builtin.copy:
         dest: "{{ admin_download_dir }}/.aap27_bundle_dir"
         content: "{{ effective_bundle_root }}\n"
         owner: "{{ platform_admin_user }}"
         group: "{{ platform_admin_user }}"
         mode: "0600"
+      when: not bundle_already_ready | bool
+
+    - name: Remove temporary extraction directory
+      ansible.builtin.file:
+        path: "{{ tmp_extract_dir }}"
+        state: absent
+      when: not bundle_already_ready | bool
 
     - name: Remove compressed bundle archive after extraction
       ansible.builtin.file:
         path: "{{ admin_download_dir }}/{{ effective_bundle_file }}"
         state: absent
-      when: remove_bundle_archive_after_extract | bool
+      when: remove_bundle_archive_after_extract | bool and not bundle_already_ready | bool

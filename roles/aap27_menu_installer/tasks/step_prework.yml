@@ -1,4 +1,68 @@
 ---
+## Ensure the system is registered with Red Hat Subscription Management (RHSM)
+# and enable required repos before attempting to install packages. This
+# attempts non-interactive registration using provided registry/RHSM
+# credentials (falls back to no-op if already registered).
+- name: Ensure RHSM registration and repos are configured (idempotent)
+  block:
+    - name: Check if system is already registered with subscription-manager
+      ansible.builtin.command:
+        cmd: subscription-manager identity
+      register: rhsm_identity
+      failed_when: false
+      changed_when: false
+
+    - name: Register with subscription-manager when not registered
+      ansible.builtin.command:
+        cmd: >-
+          subscription-manager register --username "{{ (aap27_menu_installer_registry_username | default('')) | default(RHSM_USERNAME | default('')) }}" --password "{{ (aap27_menu_installer_registry_password | default('')) | default(RHSM_PASSWORD | default('')) }}"
+      register: rhsm_register
+      failed_when: rhsm_register.rc != 0 and (rhsm_register.stderr is search("already registered") | not)
+      no_log: true
+      when: rhsm_identity.rc != 0
+
+    - name: Attempt to auto-attach subscriptions (best-effort)
+      ansible.builtin.command:
+        cmd: subscription-manager attach --auto
+      failed_when: false
+      when: rhsm_identity.rc != 0
+
+    - name: Determine RHEL major version and architecture facts
+      ansible.builtin.set_fact:
+        _rhel_major: "{{ ansible_distribution_version.split('.')[:1] | join('') }}"
+        _arch: "{{ ansible_architecture }}"
+
+    - name: Refresh subscription-manager data (best-effort)
+      ansible.builtin.command:
+        cmd: subscription-manager refresh
+      failed_when: false
+      when: rhsm_identity.rc == 0 or rhsm_register is defined
+
+    - name: Enable required RHEL repos (best-effort)
+      ansible.builtin.command:
+        cmd: >-
+          subscription-manager repos --enable "rhel-{{ _rhel_major }}-for-{{ _arch }}-baseos-rpms" --enable "rhel-{{ _rhel_major }}-for-{{ _arch }}-appstream-rpms"
+      failed_when: false
+      when: rhsm_identity.rc == 0 or rhsm_register is defined
+
+    - name: Enable CodeReady builder repo (best-effort)
+      ansible.builtin.command:
+        cmd: >-
+          subscription-manager repos --enable "codeready-builder-for-rhel-{{ _rhel_major }}-{{ _arch }}-rpms"
+      failed_when: false
+      when: rhsm_identity.rc == 0 or rhsm_register is defined
+
+  become: true
+  when:
+    - ansible_os_family == 'RedHat'
+    - (
+        ((aap27_menu_installer_registry_username | default('')) | length) > 0 and
+        ((aap27_menu_installer_registry_password | default('')) | length) > 0
+      ) or (
+        (RHSM_USERNAME is defined and (RHSM_USERNAME | length) > 0) and
+        (RHSM_PASSWORD is defined and (RHSM_PASSWORD | length) > 0)
+      )
+
 - name: Install required packages (best effort)
   ansible.builtin.dnf:
     name:
@@ -11,11 +75,14 @@
       - curl
       - jq
       - rsync
+      - sshpass
       - podman
       - podman-docker
       - python3
       - python3-pip
     state: present
+    update_cache: yes
+  become: true
   when: ansible_os_family == 'RedHat'
 
 - name: Configure rootless Podman runtime for installer user

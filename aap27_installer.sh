@@ -158,6 +158,8 @@ pause_enter() {
 source "${SCRIPT_DIR}/lib/state.sh"
 # shellcheck source=lib/ansible.sh
 source "${SCRIPT_DIR}/lib/ansible.sh"
+# shellcheck source=lib/progress.sh
+source "${SCRIPT_DIR}/lib/progress.sh" || true
 
 normalize_ansible_verbosity() {
   local raw_value="${1:-}"
@@ -1377,7 +1379,7 @@ download_bundle() {
   fi
 
   # Validate payload before replacing the target bundle file.
-  if tar -tzf "${tmp_bundle}" >/dev/null 2>&1 || tar -tf "${tmp_bundle}" >/dev/null 2>&1; then
+  if run_with_spinner "Validating downloaded bundle" tar -tzf "${tmp_bundle}" >/dev/null 2>&1 || run_with_spinner "Validating downloaded bundle" tar -tf "${tmp_bundle}" >/dev/null 2>&1; then
     mv -f "${tmp_bundle}" "${DOWNLOAD_DIR}/${BUNDLE_FILE}"
     if id "${controller_user}" >/dev/null 2>&1; then
       chown "${controller_user}:${controller_user}" "${DOWNLOAD_DIR}/${BUNDLE_FILE}" 2>/dev/null || true
@@ -1478,7 +1480,7 @@ extract_bundle() {
   # which can differ from BUNDLE_DIR_NAME if a non-default BUNDLE_URL was used.
   actual_dir_name="$(tar -tf "${bundle_path}" 2>/dev/null | head -n1 | cut -d/ -f1)"
 
-  tar "${tar_flag}" "${bundle_path}" -C "${DOWNLOAD_DIR}"
+  run_with_spinner "Extracting bundle" tar "${tar_flag}" "${bundle_path}" -C "${DOWNLOAD_DIR}"
 
   if [[ -n "${actual_dir_name}" && "${actual_dir_name}" != "${BUNDLE_DIR_NAME}" && -d "${DOWNLOAD_DIR}/${actual_dir_name}" ]]; then
     warn "Extracted bundle directory (${actual_dir_name}) differs from expected (${BUNDLE_DIR_NAME}); updating installer state."
