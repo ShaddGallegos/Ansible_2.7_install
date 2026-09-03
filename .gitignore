@@ -2,6 +2,9 @@
 # Generated: 2026-07-08T17:54:13Z
 # Source: union of all existing .gitignore patterns in this workspace
 
+# Explicitly ignore local installer output
+out.txt
+
 # Directory ignores
 **/.ansible/
 **/.cache/
@@ -11,6 +14,7 @@
 **/.venv/
 .venv-aap27/
 .venv-aap27-runtime/
+.venv*
 **/__pycache__/
 **/context/
 **/temp/
@@ -401,6 +405,7 @@ xcuserdata/
 _httplib2_test_cache/*
 a.out.*
 ansible.cfg
+ansinble.cfg
 artifacts/*
 artifacts_user/**
 bin/gstack-global-discover*
