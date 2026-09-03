@@ -96,6 +96,7 @@
   ansible.builtin.systemd_service:
     name: "user@{{ aap27_rootless_podman_uid }}.service"
     state: started
+  when: not ansible_check_mode
 
 - name: Wait for rootless Podman user DBus socket
   ansible.builtin.wait_for:
@@ -128,7 +129,9 @@
     state: started
     scope: user
   environment: *rootless_podman_environment
-  when: aap27_rootless_podman_enable_socket | bool
+  when:
+    - aap27_rootless_podman_enable_socket | bool
+    - not ansible_check_mode
 
 - name: Configure Docker-compatible rootless Podman socket
   ansible.builtin.lineinfile:
@@ -146,7 +149,9 @@
     name: podman.socket
     enabled: true
     state: started
-  when: aap27_rootless_podman_enable_rootful_socket | bool
+  when:
+    - aap27_rootless_podman_enable_rootful_socket | bool
+    - not ansible_check_mode
 
 - name: Check current rootless registry login
   become: true

@@ -56,7 +56,7 @@
     - name: Discover latest AAP bundle URL from Red Hat when not provided
       ansible.builtin.shell:
         cmd: >-
-          set -eu
+          set -euxo pipefail
           page_url=https://access.redhat.com/downloads/content/480/ver=2.7/rhel---10/2.7/x86_64/product-software
           # fetch product page and extract CDN links that look like the containerized bundle
           curl -fsSL "$page_url" 2>/dev/null |
@@ -100,12 +100,15 @@
     - name: If LOCAL_BUNDLE_PATH not provided, search installer's ~/Downloads for latest bundle
       ansible.builtin.shell:
         cmd: >-
-          set -eu
+          set -euxo pipefail
           # look for typical bundle name patterns in the current user's Downloads
           d="$HOME/Downloads"
           if [[ ! -d "$d" ]]; then exit 0; fi
           # prefer tar.gz/tgz/tar/xz bundles matching bundle prefix
-          find "$d" -maxdepth 1 -type f \( -name "ansible-automation-platform-containerized-setup-bundle-*" -o -name "*ansible-automation-platform*tar*" \) -print0 | xargs -0 ls -1t 2>/dev/null | head -n1 || true
+          find "$d" -maxdepth 1 -type f \
+            \( -name "ansible-automation-platform-containerized-setup-bundle-*" -o -name "*ansible-automation-platform*tar*" \) -print0 |
+            xargs -0 ls -1t 2>/dev/null |
+            head -n1 || true
       register: local_bundle_candidate
       delegate_to: localhost
       changed_when: false
@@ -151,6 +154,7 @@
     - name: Basic sanity check for downloaded archive
       ansible.builtin.shell:
         cmd: >-
+          set -euxo pipefail;
           f={{ admin_download_dir ~ '/' ~ effective_bundle_file }};
           # fail early if file is empty
           if [[ ! -s "$f" ]]; then
@@ -187,6 +191,7 @@
     - name: Re-run basic sanity check after curl retry
       ansible.builtin.shell:
         cmd: >-
+          set -euxo pipefail;
           f={{ admin_download_dir ~ '/' ~ effective_bundle_file }};
           if [[ ! -s "$f" ]]; then echo empty; exit 0; fi;
           head -c 512 "$f" | tr -d '\\0' | awk 'BEGIN{IGNORECASE=1} /<html|<head|<title|nginx|404 Not Found/{print "html"; exit 0} {exit 1}' || true
@@ -228,7 +233,7 @@
     - name: Optionally verify bundle SHA256 when provided
       ansible.builtin.shell:
         cmd: >-
-          sha256sum {{ admin_download_dir }}/{{ effective_bundle_file }} | awk '{print $1}'
+          set -euxo pipefail; sha256sum {{ admin_download_dir }}/{{ effective_bundle_file }} | awk '{print $1}'
       register: bundle_sha256
       changed_when: false
       failed_when: false
@@ -242,15 +247,17 @@
       when: (BUNDLE_SHA256 is defined) and not bundle_already_ready | bool
 
     - name: Create temporary extraction directory
-      ansible.builtin.shell:
-        cmd: mktemp -d "{{ admin_download_dir }}/bundle_extract.XXXX"
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: "bundle_extract."
+        dir: "{{ admin_download_dir }}"
       register: tmp_extract_dir_raw
       changed_when: true
       when: not bundle_already_ready | bool
 
     - name: Set tmp_extract_dir fact
       ansible.builtin.set_fact:
-        tmp_extract_dir: "{{ tmp_extract_dir_raw.stdout }}"
+        tmp_extract_dir: "{{ tmp_extract_dir_raw.path }}"
       when: not bundle_already_ready | bool
 
     - name: Ensure core archive utilities are available on target for extraction
@@ -280,77 +287,79 @@
       failed_when: false
       when: not bundle_already_ready | bool
 
-    - block:
-      - name: Try extraction using ansible unarchive
-        ansible.builtin.unarchive:
-          src: "{{ admin_download_dir }}/{{ effective_bundle_file }}"
-          dest: "{{ tmp_extract_dir }}"
-          remote_src: true
-          owner: "{{ platform_admin_user }}"
-          group: "{{ platform_admin_user }}"
-        when: not bundle_already_ready | bool
-      rescue:
-      - name: Inspect archive file type for manual extraction
-        ansible.builtin.shell:
-          cmd: >-
-            file -b "{{ admin_download_dir }}/{{ effective_bundle_file }}" || true
-        register: archive_file_type
-        changed_when: false
-      - name: Attempt manual extraction based on detected type
-        ansible.builtin.shell:
-          cmd: >-
-            set -euxo pipefail
-            f="{{ admin_download_dir }}/{{ effective_bundle_file }}"
-            tmp="{{ tmp_extract_dir }}"
-            # try common extraction commands, stop on success
-            if command -v bsdtar >/dev/null 2>&1; then
-              bsdtar -xf "$f" -C "$tmp" && exit 0 || true
-            fi
-            # try 7z (p7zip) for uncommon/compressed containers
-            if command -v 7z >/dev/null 2>&1; then
-              7z x -y "$f" -o"$tmp" && exit 0 || true
-            fi
-            if file -b "$f" | grep -qi gzip || echo "$f" | grep -qiE '\.gz$|\.tgz$'; then
-              tar -xzf "$f" -C "$tmp" && exit 0 || true
-            fi
-            if file -b "$f" | grep -qi xz || echo "$f" | grep -qiE '\.xz$'; then
-              tar -xJf "$f" -C "$tmp" && exit 0 || true
-            fi
-            if file -b "$f" | grep -qi bzip2 || echo "$f" | grep -qiE '\.bz2$|\.bzip2$'; then
-              tar -xjf "$f" -C "$tmp" && exit 0 || true
-            fi
-            if file -b "$f" | grep -qi zip || echo "$f" | grep -qiE '\.zip$'; then
-              unzip -q "$f" -d "$tmp" && exit 0 || true
-            fi
-            # try zstd if available
-            if command -v zstd >/dev/null 2>&1; then
-              # try to detect zstd-compressed tar (tar.zst)
-              if file -b "$f" | grep -qi zstd || echo "$f" | grep -qiE '\.zst$|\.zstd$'; then
-                # attempt to decompress to stdout and pipe to tar
-                zstd -d --stdout "$f" | tar -xf - -C "$tmp" && exit 0 || true
-              fi
-            fi
-            # final fallback try plain tar
-            tar -xf "$f" -C "$tmp" || true
-        register: manual_extract
-        failed_when: false
-      always:
-      - name: Debug extraction results when no files found
-        ansible.builtin.shell:
-          cmd: >-
-            if [ -z "$(ls -A {{ tmp_extract_dir }} 2>/dev/null)" ]; then
-              echo "NO_FILES"; file -b "{{ admin_download_dir }}/{{ effective_bundle_file }}" || true; ls -l "{{ admin_download_dir }}" || true
-            else
-              echo "FILES_EXIST"
-            fi
-        register: extract_debug
-        changed_when: false
+    - name: Extract bundle with fallbacks
       when: not bundle_already_ready | bool
+      block:
+        - name: Try extraction using ansible unarchive
+          ansible.builtin.unarchive:
+            src: "{{ admin_download_dir }}/{{ effective_bundle_file }}"
+            dest: "{{ tmp_extract_dir }}"
+            remote_src: true
+            owner: "{{ platform_admin_user }}"
+            group: "{{ platform_admin_user }}"
+          when: not bundle_already_ready | bool
+      rescue:
+        - name: Inspect archive file type for manual extraction
+          ansible.builtin.shell:
+            cmd: >-
+              file -b "{{ admin_download_dir }}/{{ effective_bundle_file }}" || true
+          register: archive_file_type
+          changed_when: false
+        - name: Attempt manual extraction based on detected type
+          ansible.builtin.shell:
+            cmd: >-
+              set -euxo pipefail
+              f="{{ admin_download_dir }}/{{ effective_bundle_file }}"
+              tmp="{{ tmp_extract_dir }}"
+              # try common extraction commands, stop on success
+              if command -v bsdtar >/dev/null 2>&1; then
+                bsdtar -xf "$f" -C "$tmp" && exit 0 || true
+              fi
+              # try 7z (p7zip) for uncommon/compressed containers
+              if command -v 7z >/dev/null 2>&1; then
+                7z x -y "$f" -o"$tmp" && exit 0 || true
+              fi
+              if file -b "$f" | grep -qi gzip || echo "$f" | grep -qiE '\.gz$|\.tgz$'; then
+                tar -xzf "$f" -C "$tmp" && exit 0 || true
+              fi
+              if file -b "$f" | grep -qi xz || echo "$f" | grep -qiE '\.xz$'; then
+                tar -xJf "$f" -C "$tmp" && exit 0 || true
+              fi
+              if file -b "$f" | grep -qi bzip2 || echo "$f" | grep -qiE '\.bz2$|\.bzip2$'; then
+                tar -xjf "$f" -C "$tmp" && exit 0 || true
+              fi
+              if file -b "$f" | grep -qi zip || echo "$f" | grep -qiE '\.zip$'; then
+                unzip -q "$f" -d "$tmp" && exit 0 || true
+              fi
+              # try zstd if available
+              if command -v zstd >/dev/null 2>&1; then
+                # try to detect zstd-compressed tar (tar.zst)
+                if file -b "$f" | grep -qi zstd || echo "$f" | grep -qiE '\.zst$|\.zstd$'; then
+                  # attempt to decompress to stdout and pipe to tar
+                  zstd -d --stdout "$f" | tar -xf - -C "$tmp" && exit 0 || true
+                fi
+              fi
+              # final fallback try plain tar
+              tar -xf "$f" -C "$tmp" || true
+          register: manual_extract
+          changed_when: false
+          failed_when: false
+      always:
+        - name: Debug extraction results when no files found
+          ansible.builtin.shell:
+            cmd: >-
+              if [ -z "$(ls -A {{ tmp_extract_dir }} 2>/dev/null)" ]; then
+                echo "NO_FILES"; file -b "{{ admin_download_dir }}/{{ effective_bundle_file }}" || true; ls -l "{{ admin_download_dir }}" || true
+              else
+                echo "FILES_EXIST"
+              fi
+          register: extract_debug
+          changed_when: false
 
     - name: Locate inventory-growth inside extracted tree
       ansible.builtin.shell:
         cmd: >-
-          set -eu
+          set -euxo pipefail
           f="{{ tmp_extract_dir }}"
           inv=$(find "$f" -type f -name inventory-growth -print -quit || true)
           if [[ -z "$inv" ]]; then
@@ -407,6 +416,7 @@
           chown -R "$user:$user" "$dest_dir/$bn"
           echo "$bn"
       register: moved_bundle_name
+      changed_when: false
       when: not bundle_already_ready | bool
 
     - name: Persist detected bundle directory for controller workflows
@@ -437,6 +447,7 @@
     - name: Diagnostic inspect moved bundle when inventory-growth missing
       ansible.builtin.shell:
         cmd: |
+          set -euxo pipefail
           d="{{ admin_download_dir }}/{{ moved_bundle_name.stdout }}"
           echo "--- LIST $d ---"
           if [[ -d "$d" ]]; then
@@ -465,15 +476,15 @@
     - name: Compute and persist effective bundle root (moved, located, or fallback)
       ansible.builtin.shell:
         cmd: |
-          set -eu
+          set -euxo pipefail
           # if moved bundle already contains inventory-growth, prefer it
-          if {{ moved_bundle_inventory.stat.exists | default(false) | ternary('true','false') }}; then
+          if {{ moved_bundle_inventory.stat.exists | default(false) | ternary('true', 'false') }}; then
             echo "{{ moved_bundle_name.stdout }}"; exit 0
           fi
           # if we located an inventory file elsewhere under Downloads, derive its top-level dir
           p="{{ located_inventory.stdout | default('') }}"
           if [[ -n "$p" ]]; then
-            prefix={{ admin_download_dir }}
+            prefix="{{ admin_download_dir }}"
             rel=${p#${prefix}/}
             echo "${rel%%/*}"; exit 0
           fi

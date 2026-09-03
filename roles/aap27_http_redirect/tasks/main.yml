@@ -112,6 +112,7 @@
     HOME: "{{ aap27_http_redirect_home }}"
     XDG_RUNTIME_DIR: "/run/user/{{ aap27_http_redirect_uid.stdout }}"
     DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ aap27_http_redirect_uid.stdout }}/bus"
+  when: not ansible_check_mode
 
 - name: Wait for HTTP redirect port
   ansible.builtin.wait_for:

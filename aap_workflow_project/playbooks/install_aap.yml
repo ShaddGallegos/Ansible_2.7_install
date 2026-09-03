@@ -75,6 +75,12 @@
         installer_inventory_file: "{{ (installer_bundle_dir | default('')) ~ '/inventory-growth' }}"
       no_log: false
 
+    - name: Stat canonical vaulted env.yml on controller
+      ansible.builtin.stat:
+        path: "{{ platform_admin_home }}/.ansible/conf/env.yml"
+      register: canonical_env_file
+      changed_when: false
+
     - name: Require canonical Vault-backed installer secrets
       ansible.builtin.assert:
         that:
@@ -86,6 +92,7 @@
           Required installer secrets are missing. Populate the encrypted
           ~/.ansible/conf/env.yml through aap27_installer.sh before running this playbook.
       no_log: true
+      when: not ansible_check_mode
 
     - name: Apply version-gated bundle compatibility fixes
       ansible.builtin.include_role:
@@ -98,6 +105,14 @@
       vars:
         aap27_bundle_hotfixes_bundle_dir: "{{ installer_bundle_dir }}"
         aap27_bundle_hotfixes_controller_user: "{{ platform_admin_user }}"
+
+    - name: Provide placeholder secrets when running in --check mode
+      ansible.builtin.set_fact:
+        ADMIN_PASSWORD: "{{ ADMIN_PASSWORD | default('changeme') }}"
+        RHSM_USERNAME: "{{ RHSM_USERNAME | default('example') }}"
+        RHSM_PASSWORD: "{{ RHSM_PASSWORD | default('changeme') }}"
+        POSTGRESQL_ADMIN_PASSWORD: "{{ POSTGRESQL_ADMIN_PASSWORD | default('changeme') }}"
+      when: ansible_check_mode
 
     - name: Prepare target-local inventory-growth
       ansible.builtin.include_role:
@@ -403,6 +418,7 @@
       become: true
 
     - name: Ensure bundle-local ansible venv exists (create if missing)
+      when: installer_bundle_dir is defined
       block:
         - name: Detect available python on controller
           ansible.builtin.command:
@@ -420,7 +436,7 @@
               Python 3 is required on the controller to bootstrap the bundle-local
               ansible venv. Install `python3.11` or `python3` on the controller and
               re-run the installer.
-          when: controller_python.stdout | default('') == ''
+          when: (controller_python.stdout | default('') == '') and (not ansible_check_mode)
 
         - name: Create bundle-local virtualenv for ansible runtime
           ansible.builtin.command:
@@ -482,10 +498,9 @@
               - "ansible-core>=2.16,<2.17"
           become: true
           become_user: "{{ installer_remote_user }}"
-          when: venv_ansible_playbook.stat.exists is not defined or venv_ansible_playbook.stat.exists == false
+          when: not (venv_ansible_playbook.stat.exists | default(false))
           changed_when: true
           failed_when: false
-      when: installer_bundle_dir is defined
 
     - name: Detect which ansible-playbook will be used (venv or PATH)
       ansible.builtin.command:
@@ -494,12 +509,12 @@
           - -lc
           - >-
             if [[ -x "{{ installer_bundle_dir }}/.venv-aap27-runtime/bin/ansible-playbook" ]]; then
-              echo "VENv_VIABLE={{ installer_bundle_dir }}/.venv-aap27-runtime/bin/ansible-playbook"; 
-              "{{ installer_bundle_dir }}/.venv-aap27-runtime/bin/ansible-playbook" --version || true;
+              echo "VENv_VIABLE={{ installer_bundle_dir }}/.venv-aap27-runtime/bin/ansible-playbook"
+              "{{ installer_bundle_dir }}/.venv-aap27-runtime/bin/ansible-playbook" --version || true
             elif command -v ansible-playbook >/dev/null 2>&1; then
-              echo "PATH_VIABLE=$(command -v ansible-playbook)"; ansible-playbook --version || true;
+              echo "PATH_VIABLE=$(command -v ansible-playbook)"; ansible-playbook --version || true
             else
-              echo 'NO_ANSIBLE_PLAYBOOK_AVAILABLE' >&2; exit 127;
+              echo 'NO_ANSIBLE_PLAYBOOK_AVAILABLE' >&2; exit 127
             fi
       args:
         chdir: "{{ installer_bundle_dir }}"
@@ -560,17 +575,43 @@
         argv:
           - bash
           - -lc
-          - >-
-            ANSIBLE_COLLECTIONS_PATHS="{{ installer_bundle_dir }}/collections:{{ lookup('env', 'ANSIBLE_COLLECTIONS_PATHS') | default('') }}";
-            if [[ -x "{{ installer_bundle_dir }}/.venv-aap27-runtime/bin/ansible-playbook" ]]; then
-              ANSIBLE_LOG_PATH="/tmp/aap_install.log" ANSIBLE_STDOUT_CALLBACK=debug "{{ installer_bundle_dir }}/.venv-aap27-runtime/bin/ansible-playbook" -vvv -i inventory-growth -c local -e ansible_user_uid={{ remote_user_uid }} -e @forwarded_extra_vars.yml ansible.containerized_installer.{{ execution_playbook }};
-            elif [[ -x "{{ installer_bundle_dir }}/.venv-aap27-runtime/bin/python" ]]; then
-              ANSIBLE_LOG_PATH="/tmp/aap_install.log" ANSIBLE_STDOUT_CALLBACK=debug "{{ installer_bundle_dir }}/.venv-aap27-runtime/bin/python" -c "import os,sys; os.environ['ANSIBLE_LOG_PATH']='/tmp/aap_install.log'; os.environ['ANSIBLE_STDOUT_CALLBACK']='debug'; sys.argv=['ansible-playbook','-vvv','-i','inventory-growth','-c','local','-e','ansible_user_uid={{ remote_user_uid }}','-e','@forwarded_extra_vars.yml','ansible.containerized_installer.{{ execution_playbook }}']; from ansible.cli.playbook import PlaybookCLI; PlaybookCLI().run()";
-            elif command -v ansible-playbook >/dev/null 2>&1; then
-              ANSIBLE_LOG_PATH="/tmp/aap_install.log" ANSIBLE_STDOUT_CALLBACK=debug ansible-playbook -vvv -i inventory-growth -c local -e ansible_user_uid={{ remote_user_uid }} -e @forwarded_extra_vars.yml ansible.containerized_installer.{{ execution_playbook }};
-            else
-              echo 'ansible-playbook not found in bundle venv, venv python fallback, or PATH' >&2; exit 127;
-            fi
+          - |
+                set -euxo pipefail
+                ANSIBLE_COLLECTIONS_PATHS="{{ installer_bundle_dir }}/collections:{{ lookup('env', 'ANSIBLE_COLLECTIONS_PATHS') | default('') }}"
+                if [[ -x "{{ installer_bundle_dir }}/.venv-aap27-runtime/bin/ansible-playbook" ]]; then
+                  ANSIBLE_LOG_PATH="/tmp/aap_install.log" \
+                    ANSIBLE_STDOUT_CALLBACK=debug \
+                    "{{ installer_bundle_dir }}/.venv-aap27-runtime/bin/ansible-playbook" \
+                      -vvv \
+                      -i inventory-growth \
+                      -c local \
+                      -e "ansible_user_uid={{ remote_user_uid }}" \
+                      -e @forwarded_extra_vars.yml \
+                      ansible.containerized_installer.{{ execution_playbook }}
+                elif [[ -x "{{ installer_bundle_dir }}/.venv-aap27-runtime/bin/python" ]]; then
+                  ANSIBLE_LOG_PATH="/tmp/aap_install.log" \
+                    ANSIBLE_STDOUT_CALLBACK=debug \
+                    "{{ installer_bundle_dir }}/.venv-aap27-runtime/bin/python" \
+                      -m ansible.cli.playbook \
+                      -vvv \
+                      -i inventory-growth \
+                      -c local \
+                      -e "ansible_user_uid={{ remote_user_uid }}" \
+                      -e @forwarded_extra_vars.yml \
+                      ansible.containerized_installer.{{ execution_playbook }}
+                elif command -v ansible-playbook >/dev/null 2>&1; then
+                  ANSIBLE_LOG_PATH="/tmp/aap_install.log" \
+                    ANSIBLE_STDOUT_CALLBACK=debug \
+                    ansible-playbook \
+                      -vvv \
+                      -i inventory-growth \
+                      -c local \
+                      -e "ansible_user_uid={{ remote_user_uid }}" \
+                      -e @forwarded_extra_vars.yml \
+                      ansible.containerized_installer.{{ execution_playbook }}
+                else
+                  echo 'ansible-playbook not found in bundle venv, venv python fallback, or PATH' >&2; exit 127
+                fi
       args:
         chdir: "{{ installer_bundle_dir }}"
       register: install_result
