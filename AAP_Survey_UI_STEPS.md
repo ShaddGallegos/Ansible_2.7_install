@@ -1,5 +1,10 @@
 # Short UI steps: create a Job Template Survey in Ansible Automation Platform
 
+## Contents
+
+- Steps
+- Notes
+
 1. Open the Controller web UI and sign in as an admin.
 2. Navigate to Templates -> Job Templates and open the Template used to run `install_aap.yml` (or create one pointing at the project/playbook).
 3. Click the "SURVEY" tab and then "Add" to create a new survey.

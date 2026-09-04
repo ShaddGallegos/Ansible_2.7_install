@@ -1,6 +1,14 @@
 # AAP 2.7 Install Workflow Project
 
-This project creates AAP controller resources so installation can be launched as workflow templates with surveys (instead of an interactive shell menu).
+Lightweight Ansible project that generates controller resources (inventories, credentials, job and workflow templates) so the installer can be launched from the AAP UI using surveys.
+
+## Contents
+
+- What It Creates
+- Files
+- Prerequisites
+- Run
+- Design Notes
 
 ## What It Creates
 

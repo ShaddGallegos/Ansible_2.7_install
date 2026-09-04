@@ -2,6 +2,17 @@
 
 Use this checklist before running the installer or the AAP workflow project.
 
+## Contents
+
+- Repository Automation Completed
+- Accounts, Tokens, and Credentials
+- Host Readiness
+- Security and Access
+- Platform Components
+- Execution Playbook Options
+- Shell Menu Execution Command
+- Ansible Workflow (Controller-Driven)
+
 ## Repository Automation Completed
 
 - [x] Workflow prework now configures rootless podman for the runtime `remote_user` (not hardcoded `admin`).

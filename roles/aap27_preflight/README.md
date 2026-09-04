@@ -1,6 +1,11 @@
 # aap27_preflight role
 
 Idempotent CPU, RAM, and available-disk validation for AAP target hosts.
+
+## Contents
+
+- Description
+- Example
 Defaults match the shell installer checks: 4 vCPUs, 16 GB RAM, and 40 GB free
 on `/`.
 

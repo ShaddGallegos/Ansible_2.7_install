@@ -1,5 +1,13 @@
 # Workflow Project Checklist
 
+## Contents
+
+- Repository Automation Completed
+- Controller Access
+- Token and Credential Sources
+- AAP Workflow Content
+- Launch Validation
+
 ## Repository Automation Completed
 
 - [x] Prework configures rootless podman for runtime `remote_user` (survey value), not only `admin`.

@@ -10,7 +10,7 @@ Fastest path to running the AAP 2.7-2 menu installer.
   **remote** (a separate host is bootstrapped and installed over SSH).
 - Can run the automated full-install workflow via `--non-interactive`, driven
   by env vars stored in `~/.ansible/conf/env.yml` (vault-encrypted, shared across
-  identity are always prompted before automation begins.
+  runs). Identity values are always prompted before automation begins.
 
 ## Prerequisites
 

@@ -18,10 +18,10 @@ the vault password continue to work.
 
 ```yaml
 roles:
-	- role: aap27_defaults
-		vars:
-			aap27_defaults_use_local_env: true
-	- role: aap27_menu_installer
+  - role: aap27_defaults
+    vars:
+      aap27_defaults_use_local_env: true
+  - role: aap27_menu_installer
 ```
 
 Run the playbook with the vault password file:

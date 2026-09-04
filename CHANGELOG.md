@@ -1,5 +1,11 @@
 # Changelog
 
+All notable changes are recorded here. Keep an `Unreleased` section at the top for in-progress edits, followed by dated entries.
+
+## Unreleased
+
+- (work in progress)
+
 Notable changes to `aap27_installer.sh` and the surrounding project
 structure. Newest first.
 

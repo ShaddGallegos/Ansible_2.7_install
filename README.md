@@ -1,6 +1,17 @@
 # AAP 2.7-2 Menu Installer Helper
 
-This folder contains a menu-driven bash helper for preparing and installing Red Hat Ansible Automation Platform (AAP) 2.7-2 containerized setup bundle on a single node.
+A concise helper repository and menu-driven installer for preparing and installing Red Hat Ansible Automation Platform (AAP) 2.7-2 (containerized) on a single node.
+
+## Contents
+
+- Files
+- What This Tool Does
+- Ansible Workflow (Controller-Driven)
+- Pre-Install Checklist
+- Usage
+- Important Notes
+- Development and Runtime Environments
+- Helpful Links
 
 ## Files
 
