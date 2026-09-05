@@ -62,3 +62,62 @@ bash tests/test_aap27_menu_installer.sh
 
 See `README.md` for the full menu reference, and `CHECKLIST.md` for the
 pre-install checklist.
+
+## Example: Remote installer (Fedora installer -> RHEL target)
+
+This is a quick example for running the installer from a Fedora-based installer node and installing AAP onto a separate RHEL 10 target (two VMs). The installer VM in my lab is Fedora 44 and the target is RHEL 10.
+
+Requirements
+
+- Installer OS: Fedora 44 (or a RHEL-family control host)
+- Target OS: RHEL 10
+- Storage: 50 GB available on target
+- RAM: 17 GB
+- CPUs: 4
+
+High-level steps
+
+1. On the installer (Fedora) VM clone this repository and change into it:
+
+```bash
+git clone https://github.com/ShaddGallegos/Ansible_2.7_install.git
+cd Ansible_2.7_install
+```
+
+2. Download the AAP 2.7 containerized setup bundle into the installer user's `~/Downloads` directory. You can obtain the bundle from Red Hat:
+
+- https://access.redhat.com/downloads/content/480/
+
+3. Ensure the RHEL 10 VM is installed, reachable by SSH from the installer VM, and meets the requirements above.
+
+4. Run the installer in non-interactive (automated) mode. The script will prompt for any missing identity/credential values and persist them to a vaulted env file on the installer node:
+
+```bash
+bash aap27_installer.sh --non-interactive
+```
+
+Notes about persisted state
+
+- Installer values are saved in `~/.ansible/conf/env.yml` (Ansible Vault encrypted).
+- The vault password file is created at `~/.ansible/conf/.vaultpass.txt`.
+
+Typical variables the installer will prompt for
+
+- `AAP_CONTROLLER_FQDN`
+- `AAP_DOMAIN_NAME`
+- `AAP_INSTALLER_SSH_KEY` (the script will create/pull this from `~/.ssh/` if missing)
+- `AAP_INSTALLER_USER`
+- `AAP_REMOTE_FQDN`
+- `AAP_REMOTE_IP`
+- `AAP_REMOTE_USER`
+- `AAP_SHORTNAME`
+- `INSTALL_SCOPE` (defaults to `remote`)
+- `INVENTORY_GROWTH_USERNAME`
+- `INVENTORY_GROWTH_PASSWORD`
+- `RHSM_USERNAME`
+- `RHSM_PASSWORD`
+- `RH_AH_TOKEN` (Automation Hub token — https://console.redhat.com/ansible/automation-hub/token)
+- `RH_OFFLINE_TOKEN` (Offline token — https://access.redhat.com/management/api)
+- `ROOT_PASSWORD` (one-time root password for initial bootstrap, removed from state after use)
+
+Try it out and let me know how it behaves in your environment.
