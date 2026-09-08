@@ -2,11 +2,11 @@
 
 ## Contents
 
-- Repository Automation Completed
-- Controller Access
-- Token and Credential Sources
-- AAP Workflow Content
-- Launch Validation
+- [Repository Automation Completed](#repository-automation-completed)
+- [Controller Access](#controller-access)
+- [Token and Credential Sources](#token-and-credential-sources)
+- [AAP Workflow Content](#aap-workflow-content)
+- [Launch Validation](#launch-validation)
 
 ## Repository Automation Completed
 
@@ -28,11 +28,11 @@
 ## Token and Credential Sources
 
 - [ ] RHSM username/password
-  - https://www.redhat.com/wapps/ugc/register.html?_flowId=register-flow&_flowExecutionKey=e1s1
+  - [Register for Red Hat account](https://www.redhat.com/wapps/ugc/register.html?_flowId=register-flow&_flowExecutionKey=e1s1)
 - [ ] Red Hat offline token
-  - https://access.redhat.com/management/api
+  - [Offline token API](https://access.redhat.com/management/api)
 - [ ] Red Hat Remote Automation Hub token
-  - https://console.redhat.com/ansible/automation-hub/token
+  - [Automation Hub tokens](https://console.redhat.com/ansible/automation-hub/token)
 
 ## AAP Workflow Content
 

@@ -6,10 +6,9 @@ This role converts the shell-driven AAP 2.7 menu installer workflow into an Ansi
 
 ## Contents
 
-- Steps
-- Collection patches
-- Example
-
+- [Steps](#steps)
+- [Collection patches](#collection-patches)
+- [Example](#example)
 
 - preflight
 - prework

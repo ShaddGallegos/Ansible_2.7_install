@@ -4,14 +4,14 @@ Use this checklist before running the installer or the AAP workflow project.
 
 ## Contents
 
-- Repository Automation Completed
-- Accounts, Tokens, and Credentials
-- Host Readiness
-- Security and Access
-- Platform Components
-- Execution Playbook Options
-- Shell Menu Execution Command
-- Ansible Workflow (Controller-Driven)
+- [Repository Automation Completed](#repository-automation-completed)
+- [Accounts, Tokens, and Credentials](#accounts-tokens-and-credentials)
+- [Host Readiness](#host-readiness)
+- [Security and Access](#security-and-access)
+- [Platform Components](#platform-components)
+- [Execution Playbook Options](#execution-playbook-options)
+- [Shell Menu Execution Command](#shell-menu-execution-command)
+- [Ansible Workflow (Controller-Driven)](#ansible-workflow-controller-driven)
 
 ## Repository Automation Completed
 

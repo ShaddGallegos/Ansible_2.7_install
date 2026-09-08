@@ -4,13 +4,18 @@ Idempotent CPU, RAM, and available-disk validation for AAP target hosts.
 
 ## Contents
 
-- Description
-- Example
+- [Description](#description)
+- [Example](#example)
+
+## Description
+
 Defaults match the shell installer checks: 4 vCPUs, 16 GB RAM, and 40 GB free
 on `/`.
 
 By default insufficient resources produce warnings. Set
 `aap27_preflight_fail_on_insufficient: true` to enforce the thresholds.
+
+## Example
 
 ```yaml
 roles:

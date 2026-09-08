@@ -4,14 +4,14 @@ A concise helper repository and menu-driven installer for preparing and installi
 
 ## Contents
 
-- Files
-- What This Tool Does
-- Ansible Workflow (Controller-Driven)
-- Pre-Install Checklist
-- Usage
-- Important Notes
-- Development and Runtime Environments
-- Helpful Links
+- [Files](#files)
+- [What This Tool Does](#what-this-tool-does)
+- [Ansible Workflow (Controller-Driven)](#ansible-workflow-controller-driven)
+- [Pre-Install Checklist](#pre-install-checklist)
+- [Usage](#usage)
+- [Important Notes](#important-notes)
+- [Development and Runtime Environments](#development-and-runtime-environments)
+- [Helpful Links](#helpful-links)
 
 ## Files
 
@@ -92,13 +92,13 @@ cd aap_workflow_project
 ansible-galaxy collection install -r requirements.yml
 ```
 
-2. Configure controller and credential values:
+1. Configure controller and credential values:
 
 - Edit `aap_workflow_project/group_vars/all.yml`
 - Set controller URL and auth (`aap_controller_host`, token or username/password)
 - Set credential values (`machine_credential_*`, `registry_*`)
 
-3. Confirm controller inventory endpoint file:
+1. Confirm controller inventory endpoint file:
 
 - `aap_workflow_project/inventory/controller.ini`
 
@@ -131,12 +131,14 @@ Before running install, confirm:
    - `access.cdn.redhat.com`
    - `console.redhat.com`
 5. Credentials/tokens are ready:
-  - RHSM username/password (same credentials generally used for Red Hat Login, CDN, and `registry.redhat.io`)
-   - Red Hat offline token: https://access.redhat.com/management/api
-   - Red Hat Automation Hub token: https://console.redhat.com/ansible/automation-hub/token
-6. You have root/sudo access.
-7. Time sync (chrony/ntp) is working.
-8. FQDN resolves locally and in DNS.
+
+- RHSM username/password (same credentials generally used for Red Hat Login, CDN, and `registry.redhat.io`)
+- Red Hat offline token: https://access.redhat.com/management/api
+- Red Hat Automation Hub token: https://console.redhat.com/ansible/automation-hub/token
+
+1. You have root/sudo access.
+2. Time sync (chrony/ntp) is working.
+3. FQDN resolves locally and in DNS.
 
 ## Usage
 

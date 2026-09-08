@@ -46,7 +46,7 @@ bash tests/test_aap27_menu_installer.sh
 ## Key runtime and state variables
 
 | Variable | Purpose |
-|---|---|
+| --- | --- |
 | `INSTALL_SCOPE` | `local` or `remote` |
 | `ADMIN_USER` / `ADMIN_HOME` | Platform admin identity; defaults to `admin` and `/home/admin` |
 | `AAP_CONTROLLER_IP` / `AAP_CONTROLLER_FQDN` | Remote target host (remote scope) |
@@ -84,13 +84,13 @@ git clone https://github.com/ShaddGallegos/Ansible_2.7_install.git
 cd Ansible_2.7_install
 ```
 
-2. Download the AAP 2.7 containerized setup bundle into the installer user's `~/Downloads` directory. You can obtain the bundle from Red Hat:
+1. Download the AAP 2.7 containerized setup bundle into the installer user's `~/Downloads` directory. You can obtain the bundle from Red Hat:
 
 - https://access.redhat.com/downloads/content/480/
 
-3. Ensure the RHEL 10 VM is installed, reachable by SSH from the installer VM, and meets the requirements above.
+1. Ensure the RHEL 10 VM is installed, reachable by SSH from the installer VM, and meets the requirements above.
 
-4. Run the installer in non-interactive (automated) mode. The script will prompt for any missing identity/credential values and persist them to a vaulted env file on the installer node:
+2. Run the installer in non-interactive (automated) mode. The script will prompt for any missing identity/credential values and persist them to a vaulted env file on the installer node:
 
 ```bash
 bash aap27_installer.sh --non-interactive

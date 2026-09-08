@@ -1,14 +1,16 @@
 # AAP 2.7 Install Workflow Project
 
-Lightweight Ansible project that generates controller resources (inventories, credentials, job and workflow templates) so the installer can be launched from the AAP UI using surveys.
+Lightweight Ansible project that generates controller resources (inventories,
+credentials, job and workflow templates) so the installer can be launched from
+the AAP UI using surveys.
 
 ## Contents
 
-- What It Creates
-- Files
-- Prerequisites
-- Run
-- Design Notes
+- [What It Creates](#what-it-creates)
+- [Files](#files)
+- [Prerequisites](#prerequisites)
+- [Run](#run)
+- [Design Notes](#design-notes)
 
 ## What It Creates
 
@@ -21,7 +23,7 @@ Lightweight Ansible project that generates controller resources (inventories, cr
 
 ## SCM Project URL
 
-- https://github.com/shaddgallegos/Ansible_2.7_install.git
+- [Ansible_2.7_install GitHub repository](https://github.com/shaddgallegos/Ansible_2.7_install.git)
 
 ## Files
 
@@ -43,12 +45,13 @@ Lightweight Ansible project that generates controller resources (inventories, cr
 ansible-galaxy collection install -r requirements.yml
 ```
 
-2. Copy `inventory/controller.ini.example` to `inventory/controller.ini`, or
-  run the menu install-scope prompt to generate it. The operational inventory
-  is intentionally ignored by Git.
-3. Update `group_vars/all.yml` with controller URL and auth.
-4. Set `machine_credential_username` to a non-root SSH user (for example `admin`).
-5. Ensure controller token/user can manage resources.
+1. Copy `inventory/controller.ini.example` to `inventory/controller.ini`, or
+  run the menu install-scope prompt to generate it. The operational
+  inventory is intentionally ignored by Git.
+1. Update `group_vars/all.yml` with controller URL and auth.
+1. Set `machine_credential_username` to a non-root SSH user (for example
+  `admin`).
+1. Ensure controller token/user can manage resources.
 
 ## Run
 
@@ -60,7 +63,9 @@ ansible-playbook -i inventory/controller.ini playbooks/create_controller_resourc
 
 - Surveys are enabled on templates to collect runtime values.
 - Install survey includes `remote_user`; it must be non-root to satisfy containerized installer preflight.
-- Prework configures rootless podman for runtime `remote_user`, enables linger/user manager, and attempts `registry.redhat.io` login using RHSM credentials.
+- Prework configures rootless podman for runtime `remote_user`, enables
+   linger/user manager, and attempts `registry.redhat.io` login using RHSM
+   credentials.
 - Install playbook validates `remote_user` and `machine_credential_username` alignment before running `ansible.containerized_installer`.
 - Workflow links templates in this sequence:
   - Prework -> Host Identity -> Download Bundle -> Install AAP

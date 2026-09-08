@@ -10,7 +10,7 @@ the vault password continue to work.
   section per project (keyed by `aap27_defaults_project_key`, default
   `Ansible_2.7_install`); project keys override `common` on collision.
 - The complete non-secret variable schema is in `templates/env.yml.example` at
-	the repository root.
+ the repository root.
 - The vault password file is expected at `~/.ansible/conf/.vaultpass.txt` and
   is created once and reused across all projects (never recreated).
 - Set `aap27_defaults_use_local_env: true` when invoking this
@@ -28,8 +28,8 @@ Run the playbook with the vault password file:
 
 ```bash
 ansible-playbook \
-	--vault-password-file ~/.ansible/conf/.vaultpass.txt \
-	playbook.yml
+ --vault-password-file ~/.ansible/conf/.vaultpass.txt \
+ playbook.yml
 ```
 
 Override `aap27_defaults_env_file` when a different vaulted variable file is

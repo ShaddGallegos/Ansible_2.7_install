@@ -12,6 +12,7 @@ structure. Newest first.
 ## 2026-09-01
 
 ### Refactor and cleanup
+
 - Removed the `scripts/` directory and legacy `run_install_aap.sh` wrapper.
   These were unreferenced one-time repair generators whose behavior is now
   implemented and tested in `aap27_installer.sh`, `lib/`, and first-party
@@ -26,6 +27,7 @@ structure. Newest first.
 ## 2026-08-14
 
 ### Repo structure
+
 - Removed the superseded `fix_podman_user_bus.sh` compatibility helper and
   converted every remaining shell Podman call to the canonical Ansible
   playbook using a protected temporary extra-vars file.
@@ -69,6 +71,7 @@ structure. Newest first.
   repo variable or manual dispatch), and `tests/test_aap27_menu_installer.sh`.
 
 ### Script fixes and features
+
 - Normalized remote inventory to use the saved controller FQDN as the host
   alias and the IP as `ansible_host`; rootless OCI remediation now targets the
   stable `controller` group instead of a hardcoded FQDN.
