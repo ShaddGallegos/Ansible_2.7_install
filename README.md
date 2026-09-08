@@ -231,3 +231,22 @@ entry is never mutated by remote preparation.
   - https://access.redhat.com/management/api
 - Remote Automation Hub token:
   - https://console.redhat.com/ansible/automation-hub/token
+
+## Red Hat developer subscription and tokens
+
+You can obtain a free developer subscription and downloads from Red Hat at:
+
+- https://developers.redhat.com/ — sign in or create a free Red Hat Developer account to register developer systems and access downloads and entitlements.
+
+Tokens used by this installer:
+
+- Offline token: generate an API/offline token from your Red Hat account (Access or Developer portals). This token is used by the installer to download the AAP containerized setup bundle when a direct download requires entitlement.
+- Automation Hub token: log in to https://console.redhat.com, open the Automation Hub (Ansible) section, and create or view a token for `automation-hub` use. This token is used for accessing Automation Hub content during installer runs.
+
+Typical steps to obtain tokens:
+
+1. Sign in at https://developers.redhat.com or https://access.redhat.com with your Red Hat account.
+2. Navigate to the account API or tokens page (often listed under account or API access) and create an offline/API token. Save it securely — the installer expects it in `~/.ansible/conf/env.yml` or you can enter it when prompted.
+3. For the Automation Hub token, sign in to https://console.redhat.com, open the Automation Hub or Tokens section, and create a new token. Copy it into your installer env or supply it at the prompt.
+
+Note: exact UI locations and labels may change; search for "API token", "offline token", or "Automation Hub token" in the Red Hat web console if needed.

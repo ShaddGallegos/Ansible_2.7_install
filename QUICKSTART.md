@@ -121,3 +121,22 @@ Typical variables the installer will prompt for
 - `ROOT_PASSWORD` (one-time root password for initial bootstrap, removed from state after use)
 
 Try it out and let me know how it behaves in your environment.
+
+Red Hat developer subscription, tokens, and manual bundle fallback
+
+If you don't already have a Red Hat entitlement, you can register for a free developer subscription at https://developers.redhat.com which provides access to downloads and developer entitlements.
+
+Obtaining tokens
+
+- Offline token: Sign in to https://developers.redhat.com or https://access.redhat.com, find the API/Developer or Tokens section in your account, and create an offline/API token. This token allows the installer to download entitlement-protected content on your behalf.
+- Automation Hub token: Sign in to https://console.redhat.com, open the Automation Hub (Ansible) area, and create a token for Automation Hub access. Provide this token to the installer when prompted or store it in `~/.ansible/conf/env.yml`.
+
+Manual bundle fallback
+
+If the installer is unable to download the Ansible Automation Platform bundle automatically, you can manually download the bundle archive to the installer user's `~/Downloads` directory. The installer script will automatically detect a local bundle and will SCP it from the installer (`~/Downloads/<bundle>`) to the target AAP host at `/home/admin/Downloads` when running a remote install. You can also manually copy the file with:
+
+```bash
+scp ~/Downloads/ansible-automation-platform-containerized-setup-bundle-2.7-*.x86_64 admin@<AAP_REMOTE_IP>:/home/admin/Downloads/
+```
+
+Then re-run the installer; it will detect the persisted bundle on the target and proceed with extraction.
