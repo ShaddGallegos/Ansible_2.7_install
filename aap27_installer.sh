@@ -18,11 +18,11 @@ BUNDLE_URL_DEFAULT="https://access.cdn.redhat.com/content/origin/files/sha256/5c
 BUNDLE_DIR_NAME="ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64"
 ADMIN_USER="${ADMIN_USER:-admin}"
 ADMIN_HOME="${ADMIN_HOME:-/home/${ADMIN_USER}}"
-# Local installer state (Downloads/env file) lives under the invoking user's
-# own home. The admin account/home is only guaranteed to exist locally when
-# INSTALL_SCOPE=local; for INSTALL_SCOPE=remote, admin is created on the
-# remote target host instead (see provision_remote_admin_via_ssh).
-CONTROLLER_STATE_HOME="${HOME:-$(getent passwd "$(id -un)" | cut -d: -f6)}"
+# Local installer state (Downloads/env file) lives under the invoking account's
+# configured home. Do not trust an inherited HOME from a test or sudo session.
+# CONTROLLER_STATE_HOME remains available as an explicit override.
+CONTROLLER_STATE_HOME="${CONTROLLER_STATE_HOME:-$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6)}"
+CONTROLLER_STATE_HOME="${CONTROLLER_STATE_HOME:-${HOME:-/tmp}}"
 CONTROLLER_STATE_HOME="${CONTROLLER_STATE_HOME:-/tmp}"
 DOWNLOAD_DIR="${CONTROLLER_STATE_HOME}/Downloads"
 # Shared, vault-encrypted state file used by ALL GIT projects (not just this
@@ -163,6 +163,11 @@ source "${SCRIPT_DIR}/lib/progress.sh" || true
 
 normalize_ansible_verbosity() {
   local raw_value="${1:-}"
+
+  if [[ "${AAP_DEBUG:-false}" == "true" ]]; then
+    printf '%s' '-vvv'
+    return 0
+  fi
 
   case "${raw_value}" in
     ""|0|none|NONE)
@@ -747,6 +752,7 @@ read_secret_prompt() {
   local var_name="${1:-}"
   local prompt="${2:-}"
   local force_prompt="${3:-false}"
+  local default_value="${4:-}"
   local value
 
   if [[ "${NONINTERACTIVE}" == "true" && "${force_prompt}" != "true" ]]; then
@@ -761,6 +767,9 @@ read_secret_prompt() {
       return 1
     fi
     echo
+    if [[ -z "${value}" && -n "${default_value}" ]]; then
+      value="${default_value}"
+    fi
     if [[ -n "${value}" ]]; then
       printf -v "${var_name}" '%s' "${value}"
       return 0
@@ -1028,10 +1037,72 @@ EOF
   ok "Host identity updated. FQDN=${AAP_CONTROLLER_FQDN}, domain=${target_domain:-<unset>}."
 }
 
+register_remote_rhsm_via_ansible() {
+  local remote_host="${1:-}"
+  local root_password="${2:-}"
+  local registration_output inventory_file extra_vars_file playbook_file
+
+  inventory_file="$(mktemp)"
+  extra_vars_file="$(mktemp)"
+  chmod 600 "${inventory_file}" "${extra_vars_file}"
+  playbook_file="${SCRIPT_DIR}/aap_workflow_project/playbooks/register_rhsm.yml"
+
+  printf '%s\n' \
+    '[controller]' \
+    "rhsm-bootstrap ansible_host=${remote_host} ansible_user=root" \
+    '' \
+    '[all:vars]' \
+    "ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'" \
+    > "${inventory_file}"
+
+  jq -n \
+    --arg ansible_password "${root_password}" \
+    --arg RHSM_USERNAME "${RHSM_USERNAME}" \
+    --arg RHSM_PASSWORD "${RHSM_PASSWORD}" \
+    --arg RHSM_ORG_ID "${RHSM_ORG_ID}" \
+    --arg RHSM_ACTIVATION_KEY "${RHSM_ACTIVATION_KEY:-}" \
+    '{
+      ansible_password: $ansible_password,
+      RHSM_USERNAME: $RHSM_USERNAME,
+      RHSM_PASSWORD: $RHSM_PASSWORD,
+      RHSM_ORG_ID: $RHSM_ORG_ID,
+      RHSM_ACTIVATION_KEY: $RHSM_ACTIVATION_KEY
+    }' > "${extra_vars_file}"
+
+  if registration_output="$(run_project_playbook "${playbook_file}" "${extra_vars_file}" "${inventory_file}" 2>&1)"; then
+    rm -f "${inventory_file}" "${extra_vars_file}"
+    printf '%s\n' "${registration_output}"
+    return 0
+  fi
+
+  rm -f "${inventory_file}" "${extra_vars_file}"
+  printf '%s\n' "${registration_output}" >&2
+  if [[ "${registration_output}" != *"AAP27_RHSM_CREDENTIALS_REJECTED"* ]]; then
+    err "Ansible could not register ${remote_host} with Red Hat Subscription Management."
+    return 1
+  fi
+
+  if [[ -n "${RHSM_ACTIVATION_KEY:-}" ]]; then
+    save_env_kv "RHSM_ACTIVATION_KEY" "" || return 1
+    unset RHSM_ACTIVATION_KEY
+    err "Red Hat rejected the stored RHSM activation key."
+    err "The rejected activation key was cleared from ${ENV_FILE}; update it before rerunning the installer."
+  else
+    save_env_kv "RHSM_USERNAME" "" || return 1
+    save_env_kv "RHSM_PASSWORD" "" || return 1
+    save_env_kv "REDHAT_REGISTRY_USERNAME" "" || return 1
+    save_env_kv "REDHAT_REGISTRY_PASSWORD" "" || return 1
+    unset RHSM_USERNAME RHSM_PASSWORD REDHAT_REGISTRY_USERNAME REDHAT_REGISTRY_PASSWORD
+    err "Red Hat rejected the stored RHSM username or password."
+    err "The rejected username and password were cleared from ${ENV_FILE}; rerun the installer to enter both during startup."
+  fi
+  return 1
+}
+
 provision_remote_admin_via_ssh() {
   local remote_host local_key local_pub
   local root_password admin_password pubkey_b64 adminpw_b64 adminuser_b64 adminhome_b64
-  local rhsm_user_b64 rhsm_pass_b64 payload
+  local payload
 
   load_env
   remote_host="${AAP_CONTROLLER_IP:-${AAP_CONTROLLER_FQDN:-}}"
@@ -1080,29 +1151,31 @@ provision_remote_admin_via_ssh() {
     return 1
   fi
 
-  if [[ -n "${AAP_REMOTE_ROOT_PASSWORD:-}" ]]; then
-    root_password="${AAP_REMOTE_ROOT_PASSWORD}"
+  if [[ -n "${AAP_REMOTE_ROOT_PASSWORD:-${ROOT_PASSWORD:-}}" ]]; then
+    root_password="${AAP_REMOTE_ROOT_PASSWORD:-${ROOT_PASSWORD}}"
     log "Using provided root SSH password for root@${remote_host}."
   else
     read_secret_prompt root_password \
-      "Enter root SSH password for root@${remote_host} (used once to bootstrap admin)" \
-      true || return 1
+      "Enter root SSH password for root@${remote_host} [default: redhat]" \
+      true "redhat" || return 1
   fi
 
   if [[ -n "${ADMIN_PASSWORD:-}" ]]; then
     admin_password="${ADMIN_PASSWORD}"
     log "Reusing saved admin password from ${ENV_FILE}."
   else
-    read_secret_prompt admin_password "Enter password to set for remote admin user" || return 1
+    read_secret_prompt admin_password \
+      "Enter password to set for remote admin user [default: redhat]" true "redhat" || return 1
     save_env_kv "ADMIN_PASSWORD" "${admin_password}"
   fi
+
+  log "Checking Red Hat subscription registration on ${remote_host}."
+  register_remote_rhsm_via_ansible "${remote_host}" "${root_password}" || return 1
 
   pubkey_b64="$(base64 -w0 "${local_pub}")"
   adminpw_b64="$(printf '%s' "${admin_password}" | base64 -w0)"
   adminuser_b64="$(printf '%s' "${ADMIN_USER}" | base64 -w0)"
   adminhome_b64="$(printf '%s' "${ADMIN_HOME}" | base64 -w0)"
-  rhsm_user_b64="$(printf '%s' "${RHSM_USERNAME}" | base64 -w0)"
-  rhsm_pass_b64="$(printf '%s' "${RHSM_PASSWORD}" | base64 -w0)"
 
   # Values are base64'd locally and decoded remotely to avoid quoting issues over ssh.
   payload=$(cat <<REMOTE
@@ -1111,12 +1184,6 @@ PUBKEY="\$(printf '%s' '${pubkey_b64}' | base64 -d)"
 ADMINPW="\$(printf '%s' '${adminpw_b64}' | base64 -d)"
 ADMINUSER="\$(printf '%s' '${adminuser_b64}' | base64 -d)"
 ADMINHOME="\$(printf '%s' '${adminhome_b64}' | base64 -d)"
-RHSMUSER="\$(printf '%s' '${rhsm_user_b64}' | base64 -d)"
-RHSMPASS="\$(printf '%s' '${rhsm_pass_b64}' | base64 -d)"
-
-if ! subscription-manager identity >/dev/null 2>&1; then
-  subscription-manager register --username "\${RHSMUSER}" --password "\${RHSMPASS}"
-fi
 
 RHEL_MAJOR="\$(. /etc/os-release && printf '%s' "\${VERSION_ID%%.*}")"
 RHEL_ARCH="\$(uname -m)"
@@ -1179,22 +1246,10 @@ REMOTE
 }
 
 setup_admin_user() {
-    load_env
-    local scope
-    scope="$(get_install_scope)"
-    if [[ "$scope" == "remote" ]]; then
-        log "Remote installation target detected ($scope). Skipping local admin user setup."
-        return 0
-    fi
-    load_env
-    INSTALL_SCOPE="$(get_install_scope)"
-    if [[ "$INSTALL_SCOPE" == "remote" ]]; then
-        log "Remote installation target detected ($INSTALL_SCOPE). Skipping local admin user setup."
-        return 0
-    fi
   local host_fqdn admin_password
 
   load_env
+  INSTALL_SCOPE="$(get_install_scope)"
 
   if [[ "${INSTALL_SCOPE:-}" == "remote" ]]; then
     provision_remote_admin_via_ssh
@@ -2477,6 +2532,7 @@ Options:
   -h, --help                  Show this help message and exit
   -V, --version               Show version and exit
   -y, -n, --non-interactive   Run without interactive prompts
+  --debug                     Enable Bash xtrace and Ansible -vvv output
   --local                     Set install scope to local
   --remote                    Set install scope to remote
   --scope <local|remote>      Override the install scope
@@ -2511,6 +2567,12 @@ main() {
         ;;
       --non-interactive|-y|-n)
         NONINTERACTIVE=true
+        ;;
+      --debug)
+        AAP_DEBUG=true
+        ANSIBLE_VERBOSITY="-vvv"
+        warn "Debug mode enabled. Bash xtrace may include sensitive command arguments."
+        set -x
         ;;
       --local)
         INSTALL_SCOPE="local"
@@ -2656,7 +2718,8 @@ initial_install_scope_prompt() {
     save_env_kv "AAP_REMOTE_FQDN" "$fqdn"
     save_env_kv "AAP_CONTROLLER_FQDN" "$fqdn"
 
-    log "[INFO] Using verified target: ${fqdn} (${ip}) Scope: ${scope}"
+    log "Using verified target: ${fqdn} (${ip})"
+    log "Scope: ${scope}"
     write_remote_inventory "${fqdn}" "${ip}"
     return 0
 }

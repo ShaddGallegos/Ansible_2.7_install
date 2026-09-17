@@ -74,6 +74,37 @@ test_required_prompts_reject_empty_values() {
   required_secret=""
   read_secret_prompt required_secret "Enter forced secret" true <<< 'forced-secret' >/dev/null
   assert_eq "forced secret prompt works during automated mode" "forced-secret" "${required_secret}"
+  required_secret=""
+  read_secret_prompt required_secret "Enter defaulted secret" true "redhat" <<< '' >/dev/null
+  assert_eq "secret prompt accepts configured default" "redhat" "${required_secret}"
+}
+
+test_startup_requires_all_primary_secrets() {
+  local collector_body
+  collector_body="$(declare -f ensure_rhsm_credentials_exist)"
+
+  assert_contains "startup requires offline token" \
+    'read_secret_prompt current_offline "Enter RH_OFFLINE_TOKEN' "${collector_body}"
+  assert_contains "startup requires RHSM organization ID" \
+    'Enter RHSM_ORG_ID' "${collector_body}"
+  assert_contains "startup reconfirms username after password rejection" \
+    'if [[ -z "$saved_pass" ]]' "${collector_body}"
+  assert_contains "startup requires Automation Hub token" \
+    'read_secret_prompt current_ah "Enter RH_AH_TOKEN' "${collector_body}"
+  assert_contains "startup requires admin SSH password" \
+    'read_secret_prompt current_admin "Enter Remote Node ADMIN_PASSWORD' "${collector_body}"
+  assert_contains "startup requires root SSH password" \
+    'read_secret_prompt current_root "Enter Remote Node ROOT_PASSWORD' "${collector_body}"
+  assert_contains "startup persists admin SSH password" \
+    'set_v_key "ADMIN_PASSWORD" "$ADMIN_PASSWORD"' "${collector_body}"
+  assert_contains "startup persists root SSH password" \
+    'set_v_key "ROOT_PASSWORD" "$ROOT_PASSWORD"' "${collector_body}"
+  assert_contains "startup defaults SSH passwords to redhat" \
+    'true "redhat"' "${collector_body}"
+  assert_contains "startup reports admin SSH password presence" \
+    'ADMIN_PASSWORD: [' "${collector_body}"
+  assert_eq "remote bootstrap retains canonical root SSH password" "false" \
+    "$([[ "$(declare -f provision_remote_admin_via_ssh)" == *'delete_env_key "ROOT_PASSWORD"'* ]] && echo true || echo false)"
 }
 
 test_derive_domain_from_fqdn() {
@@ -222,6 +253,57 @@ test_sourcing_preserves_caller_options() {
   # shellcheck disable=SC2016
   assert_status "sourcing does not enable nounset in caller" 0 \
     bash -c 'set +u; source "$1"; [[ $- != *u* ]]' _ "${SCRIPT_DIR}/aap27_installer.sh"
+}
+
+test_state_home_ignores_inherited_home() {
+  local resolved_env
+
+  resolved_env="$(HOME=/tmp/aap27-wrong-home bash -c 'source "$1"; printf "%s" "$ENV_FILE"' _ "${SCRIPT_DIR}/aap27_installer.sh")"
+  assert_eq "installer state ignores inherited temporary HOME" \
+    "$(getent passwd "$(id -un)" | cut -d: -f6)/.ansible/conf/env.yml" "${resolved_env}"
+}
+
+test_startup_repairs_stale_installer_key() {
+  local collector_body
+  collector_body="$(declare -f ensure_rhsm_credentials_exist)"
+
+  assert_contains "startup detects a missing configured installer key" \
+    '! -f "${AAP_INSTALLER_SSH_KEY}"' "${collector_body}"
+  assert_contains "startup repairs installer key below canonical home" \
+    '${CONTROLLER_STATE_HOME}/.ssh/id_ed25519' "${collector_body}"
+}
+
+test_ansible_runtime_creation_returns_clean_path() {
+  local tmp_dir original_script_dir output
+  tmp_dir="$(mktemp -d)"
+  original_script_dir="${SCRIPT_DIR}"
+  mkdir -p "${tmp_dir}/bin"
+  touch "${tmp_dir}/requirements-runtime.txt"
+
+  cat > "${tmp_dir}/bin/python3.11" <<'EOF'
+#!/usr/bin/env bash
+venv_dir="$3"
+mkdir -p "${venv_dir}/bin"
+cat > "${venv_dir}/bin/python" <<'PYTHON'
+#!/usr/bin/env bash
+echo "simulated pip output"
+PYTHON
+cat > "${venv_dir}/bin/ansible-playbook" <<'ANSIBLE'
+#!/usr/bin/env bash
+echo "ansible-playbook [core 2.16.0]"
+ANSIBLE
+chmod +x "${venv_dir}/bin/python" "${venv_dir}/bin/ansible-playbook"
+echo "simulated venv output"
+EOF
+  chmod +x "${tmp_dir}/bin/python3.11"
+
+  SCRIPT_DIR="${tmp_dir}"
+  output="$(PATH="${tmp_dir}/bin" AAP_AUTO_CREATE_ANSIBLE_VENV=true get_supported_ansible_playbook 2>/dev/null)"
+  assert_eq "runtime creation returns only ansible-playbook path" \
+    "${tmp_dir}/.venv-aap27-runtime/bin/ansible-playbook" "${output}"
+
+  SCRIPT_DIR="${original_script_dir}"
+  rm -rf "${tmp_dir}"
 }
 
 test_remote_inventory_uses_saved_fqdn_alias() {
@@ -500,9 +582,24 @@ test_remote_install_prework_relaxes_security() {
     "true true" "${output}"
 }
 
+test_remote_setup_runs_repository_bootstrap() {
+  local output
+
+  output="$({
+    load_env() { :; }
+    get_install_scope() { printf '%s' remote; }
+    provision_remote_admin_via_ssh() { printf '%s' provisioned; }
+    setup_admin_user
+  })"
+
+  assert_eq "remote admin setup runs repository and package bootstrap" \
+    "provisioned" "${output}"
+}
+
 test_remote_root_bootstrap_contract() {
-  local bootstrap_body register_line repos_line install_line ssh_config_line restart_line marker_line
+  local bootstrap_body registration_body repos_line install_line ssh_config_line restart_line marker_line
   bootstrap_body="$(declare -f provision_remote_admin_via_ssh)"
+  registration_body="$(declare -f register_remote_rhsm_via_ansible)"
 
   assert_contains "remote bootstrap readiness requires completion marker" \
     "/var/lib/aap27-bootstrap-complete" "${bootstrap_body}"
@@ -510,8 +607,30 @@ test_remote_root_bootstrap_contract() {
     "command -v podman" "${bootstrap_body}"
   assert_contains "remote bootstrap collects RHSM credentials" \
     "ensure_registry_credentials" "${bootstrap_body}"
-  assert_contains "remote bootstrap registers RHEL through root" \
-    "subscription-manager register" "${bootstrap_body}"
+  assert_contains "remote bootstrap registers RHEL through Ansible" \
+    "register_remote_rhsm_via_ansible" "${bootstrap_body}"
+  assert_contains "RHSM registration runs the dedicated Ansible playbook" \
+    "register_rhsm.yml" "${registration_body}"
+  assert_contains "RHSM registration uses a protected variable file" \
+    'chmod 600 "${inventory_file}" "${extra_vars_file}"' "${registration_body}"
+  assert_eq "RHSM registration does not invoke SSH directly" "false" \
+    "$([[ "${registration_body}" == *' ssh '* || "${registration_body}" == *'sshpass'* ]] && echo true || echo false)"
+  assert_contains "RHSM registration detects rejected credentials" \
+    "AAP27_RHSM_CREDENTIALS_REJECTED" "${registration_body}"
+  assert_status "RHSM playbook keeps activation result separate" 0 \
+    grep -q "register: rhsm_activation_registration" \
+    "${SCRIPT_DIR}/aap_workflow_project/playbooks/register_rhsm.yml"
+  assert_status "RHSM playbook keeps password result separate" 0 \
+    grep -q "register: rhsm_password_registration" \
+    "${SCRIPT_DIR}/aap_workflow_project/playbooks/register_rhsm.yml"
+  assert_eq "RHSM registration does not prompt during execution" "false" \
+    "$([[ "${registration_body}" == *"read -r"* || "${registration_body}" == *"ask_value"* || "${registration_body}" == *"read_secret_prompt"* ]] && echo true || echo false)"
+  assert_contains "RHSM registration clears rejected activation key" \
+    'save_env_kv "RHSM_ACTIVATION_KEY" ""' "${registration_body}"
+  assert_contains "RHSM registration clears rejected username" \
+    'save_env_kv "RHSM_USERNAME" ""' "${registration_body}"
+  assert_contains "RHSM registration clears rejected password" \
+    'save_env_kv "RHSM_PASSWORD" ""' "${registration_body}"
   # shellcheck disable=SC2016
   assert_contains "remote bootstrap enables BaseOS and AppStream" \
     'subscription-manager repos --enable "\${BASEOS_REPO}" --enable "\${APPSTREAM_REPO}"' "${bootstrap_body}"
@@ -520,8 +639,8 @@ test_remote_root_bootstrap_contract() {
   # shellcheck disable=SC2016
   assert_contains "remote bootstrap uses sshpass root connection" \
     'sshpass -p "${root_password}"' "${bootstrap_body}"
-  assert_contains "remote bootstrap forces one-time root password prompt" \
-    'true || return 1' "${bootstrap_body}"
+  assert_contains "remote bootstrap defaults root password to redhat" \
+    'true "redhat" || return 1' "${bootstrap_body}"
   assert_contains "remote bootstrap configures strict host-key checking off" \
     "StrictHostKeyChecking no" "${bootstrap_body}"
   assert_contains "remote bootstrap configures null known-hosts file" \
@@ -529,14 +648,11 @@ test_remote_root_bootstrap_contract() {
   assert_contains "remote bootstrap restarts sshd" \
     "systemctl restart sshd" "${bootstrap_body}"
 
-  register_line="$(grep -n 'subscription-manager register' <<< "${bootstrap_body}" | head -n1 | cut -d: -f1)"
   repos_line="$(grep -n 'subscription-manager repos --enable' <<< "${bootstrap_body}" | head -n1 | cut -d: -f1)"
   install_line="$(grep -n 'dnf -y install' <<< "${bootstrap_body}" | head -n1 | cut -d: -f1)"
   ssh_config_line="$(grep -n 'cat > /etc/ssh/ssh_config.d/90-aap27' <<< "${bootstrap_body}" | head -n1 | cut -d: -f1)"
   restart_line="$(grep -n 'systemctl restart sshd' <<< "${bootstrap_body}" | head -n1 | cut -d: -f1)"
   marker_line="$(grep -n 'install -o root -g root -m 0600' <<< "${bootstrap_body}" | head -n1 | cut -d: -f1)"
-  assert_eq "remote bootstrap orders registration before repositories" "1" \
-    "$(( register_line < repos_line ))"
   assert_eq "remote bootstrap orders repositories before packages" "1" \
     "$(( repos_line < install_line ))"
   assert_eq "remote bootstrap writes SSH policy after package setup" "1" \
@@ -741,6 +857,24 @@ test_rebuilt_main_menu_layout() {
   assert_eq "documentation submenu lists every Markdown file" "${expected_docs}" "${listed_docs}"
 }
 
+test_debug_cli_contract() {
+  local help_output main_body
+
+  help_output="$(usage)"
+  main_body="$(declare -f main)"
+  assert_contains "help documents debug logging" \
+    "--debug                     Enable Bash xtrace and Ansible -vvv output" "${help_output}"
+  assert_contains "debug mode enables Bash xtrace" "set -x" "${main_body}"
+  assert_contains "debug mode enables Ansible triple verbosity" \
+    'ANSIBLE_VERBOSITY="-vvv"' "${main_body}"
+  AAP_DEBUG=true
+  assert_eq "debug mode overrides stored Ansible verbosity" \
+    "-vvv" "$(normalize_ansible_verbosity none)"
+  unset AAP_DEBUG
+  assert_contains "project playbooks receive normalized verbosity" \
+    'command+=("${ansible_verbosity}")' "$(declare -f run_project_playbook)"
+}
+
 test_reconfigure_environment_workflow() {
   local tmp_dir secret_value output reconfigure_status
   tmp_dir="$(mktemp -d)"
@@ -831,6 +965,7 @@ test_rebuilt_menu_workflow_order() {
 echo "== aap27_installer.sh regression tests =="
 test_ask_value_and_ask_yn_noninteractive
 test_required_prompts_reject_empty_values
+test_startup_requires_all_primary_secrets
 test_derive_domain_from_fqdn
 test_build_inventory_host_line
 test_extract_bundle_detects_version_mismatch
@@ -839,6 +974,9 @@ test_state_file_is_data_not_code
 test_legacy_env_file_migrates_to_yaml
 test_collection_patch_version_gate
 test_sourcing_preserves_caller_options
+test_state_home_ignores_inherited_home
+test_startup_repairs_stale_installer_key
+test_ansible_runtime_creation_returns_clean_path
 test_remote_inventory_uses_saved_fqdn_alias
 test_explicit_target_reconfiguration_prompts
 test_configurable_admin_identity
@@ -847,6 +985,7 @@ test_2_7_4_tls_hotfix_is_idempotent
 test_remote_scope_routes_target_operations
 test_complete_install_pipeline_order
 test_remote_install_prework_relaxes_security
+test_remote_setup_runs_repository_bootstrap
 test_remote_root_bootstrap_contract
 test_inventory_growth_contract
 test_resource_shortfall_warning_and_pause
@@ -854,6 +993,7 @@ test_env_schema_defines_supported_variables
 test_installer_does_not_force_global_become
 test_http_redirect_is_integrated
 test_rebuilt_main_menu_layout
+test_debug_cli_contract
 test_reconfigure_environment_workflow
 test_rebuilt_menu_workflow_order
 

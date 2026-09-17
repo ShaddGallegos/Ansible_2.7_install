@@ -13,7 +13,7 @@ AAP27_STATE_KEYS=(
     AAP_CLEANUP_PURGE_DOWNLOADS AAP_AUTO_CLEANUP_ON_UNINSTALL
     LOCAL_BUNDLE_PATH AAP_MIN_CPU AAP_MIN_RAM_GB AAP_MIN_DISK_GB
     SUBUID_START SUBUID_COUNT ENABLE_PODMAN_SOCKET ENABLE_ROOTFUL_PODMAN_SOCKET
-    RHSM_USERNAME RHSM_PASSWORD
+    RHSM_USERNAME RHSM_PASSWORD RHSM_ORG_ID RHSM_ACTIVATION_KEY
     RH_OFFLINE_TOKEN RH_AH_TOKEN CDN_USERNAME CDN_PASSWORD REDHAT_USERNAME
     REDHAT_PASSWORD REDHAT_REGISTRY_USERNAME REDHAT_REGISTRY_PASSWORD
     CONSOLE_USERNAME CONSOLE_PASSWORD POSTGRESQL_ADMIN_PASSWORD
@@ -117,16 +117,18 @@ ensure_rhsm_credentials_exist() {
         local k="$1"
         local v="$2"
         if [[ -n "$v" ]]; then
-            "$py_bin" "$helper" set "$env_file" "$vault_pass" "$proj_key" "$k" "$v" 2>/dev/null || true
+            "$py_bin" "$helper" set "$env_file" "$vault_pass" "$proj_key" "$k" "$v" 2>/dev/null
         fi
     }
 
     # 1. Retrieve stored values
-    local saved_user saved_pass saved_offline saved_ah saved_ip saved_fqdn saved_shortname saved_domain saved_root saved_ig_u saved_ig_p saved_scope
+    local saved_user saved_pass saved_org_id saved_offline saved_ah saved_admin saved_ip saved_fqdn saved_shortname saved_domain saved_root saved_ig_u saved_ig_p saved_scope
     saved_user="${RHSM_USERNAME:-$(get_v_key "RHSM_USERNAME")}"
     saved_pass="${RHSM_PASSWORD:-$(get_v_key "RHSM_PASSWORD")}"
+    saved_org_id="${RHSM_ORG_ID:-$(get_v_key "RHSM_ORG_ID")}"
     saved_offline="${RH_OFFLINE_TOKEN:-$(get_v_key "RH_OFFLINE_TOKEN")}"
     saved_ah="${RH_AH_TOKEN:-$(get_v_key "RH_AH_TOKEN")}"
+    saved_admin="${ADMIN_PASSWORD:-$(get_v_key "ADMIN_PASSWORD")}"
     saved_ip="${AAP_REMOTE_IP:-$(get_v_key "AAP_REMOTE_IP")}"
     [[ -z "$saved_ip" ]] && saved_ip="$(get_v_key "AAP_CONTROLLER_IP")"
     saved_fqdn="${AAP_REMOTE_FQDN:-$(get_v_key "AAP_REMOTE_FQDN")}"
@@ -143,12 +145,10 @@ ensure_rhsm_credentials_exist() {
 
     # Reuse canonical state in unattended mode; prompt only when missing.
     local entered_user="${saved_user}"
-    if [[ -z "$entered_user" ]]; then
-        read -r -p "Enter RHSM_USERNAME: " entered_user
-        if [[ -z "$entered_user" ]]; then
-            echo "[ERR] RHSM_USERNAME is required in ${env_file}." >&2
-            return 1
-        fi
+    if [[ -z "$saved_pass" ]]; then
+        ask_value entered_user "Enter RHSM_USERNAME" "$saved_user" true || return 1
+    elif [[ -z "$entered_user" ]]; then
+        ask_value entered_user "Enter RHSM_USERNAME" "" true || return 1
     fi
 
     local user_changed=false
@@ -161,10 +161,15 @@ ensure_rhsm_credentials_exist() {
     export RHSM_USERNAME="$entered_user"
     set_v_key "RHSM_USERNAME" "$entered_user"
 
-    # 3. Always prompt for missing required secrets (RHSM_PASSWORD & ROOT_PASSWORD) even in --non-interactive mode
+    if [[ -z "$saved_org_id" ]]; then
+        ask_value saved_org_id "Enter RHSM_ORG_ID (passed to subscription-manager as --org)" "" true || return 1
+    fi
+
+    # Prompt for every missing required secret, including in non-interactive mode.
     local current_pass="$saved_pass"
     local current_offline="$saved_offline"
     local current_ah="$saved_ah"
+    local current_admin="$saved_admin"
     local current_ip="${saved_ip:-192.168.122.84}"
     local current_shortname="${saved_shortname:-aap}"
     local current_domain="${saved_domain:-prod.spg}"
@@ -172,19 +177,21 @@ ensure_rhsm_credentials_exist() {
     local current_root="$saved_root"
 
     if [[ "$user_changed" == "true" || -z "$current_pass" ]]; then
-        read -r -s -p "Enter RHSM_PASSWORD: " current_pass; echo ""
+        read_secret_prompt current_pass "Enter RHSM_PASSWORD" true || return 1
     fi
 
-    if [[ "$user_changed" == "true" || -z "$current_offline" ]]; then
-        if [[ "${NONINTERACTIVE:-false}" != "true" || "$user_changed" == "true" ]]; then
-            read -r -s -p "Enter RH_OFFLINE_TOKEN (Red Hat Offline API Token) [optional/press Enter]: " current_offline; echo ""
-        fi
+    if [[ -z "$current_offline" ]]; then
+        read_secret_prompt current_offline "Enter RH_OFFLINE_TOKEN (Red Hat Offline API Token)" true || return 1
     fi
 
-    if [[ "$user_changed" == "true" || -z "$current_ah" ]]; then
-        if [[ "${NONINTERACTIVE:-false}" != "true" || "$user_changed" == "true" ]]; then
-            read -r -s -p "Enter RH_AH_TOKEN (Remote Automation Hub Token) [optional/press Enter]: " current_ah; echo ""
-        fi
+    if [[ -z "$current_ah" ]]; then
+        read_secret_prompt current_ah "Enter RH_AH_TOKEN (Remote Automation Hub Token)" true || return 1
+    fi
+
+    if [[ -z "$current_admin" ]]; then
+        read_secret_prompt current_admin \
+            "Enter Remote Node ADMIN_PASSWORD (${current_fqdn} / ${current_ip}) [default: redhat]" \
+            true "redhat" || return 1
     fi
 
     if [[ "$user_changed" == "true" || -z "$saved_ip" ]]; then
@@ -206,7 +213,9 @@ ensure_rhsm_credentials_exist() {
 
     # Mandatory ROOT_PASSWORD prompt on remote node if missing
     if [[ ("$saved_scope" == "remote" || "${INSTALL_SCOPE:-remote}" == "remote") && ("$user_changed" == "true" || -z "$current_root") ]]; then
-        read -r -s -p "Enter Remote Node ROOT_PASSWORD (${current_fqdn} / ${current_ip}): " current_root; echo ""
+        read_secret_prompt current_root \
+            "Enter Remote Node ROOT_PASSWORD (${current_fqdn} / ${current_ip}) [default: redhat]" \
+            true "redhat" || return 1
     fi
 
     # Inventory-Growth Username & Password
@@ -227,8 +236,10 @@ ensure_rhsm_credentials_exist() {
 
     # 4. Export & Persist Variables
     export RHSM_PASSWORD="$current_pass"
+    export RHSM_ORG_ID="$saved_org_id"
     export RH_OFFLINE_TOKEN="$current_offline"
     export RH_AH_TOKEN="$current_ah"
+    export ADMIN_PASSWORD="$current_admin"
     export AAP_REMOTE_IP="$current_ip"
     export AAP_CONTROLLER_IP="$current_ip"
     export AAP_SHORTNAME="$current_shortname"
@@ -242,12 +253,16 @@ ensure_rhsm_credentials_exist() {
     export INVENTORY_GROWTH_PASSWORD="$current_ig_p"
     export REDHAT_REGISTRY_USERNAME="$RHSM_USERNAME"
     export REDHAT_REGISTRY_PASSWORD="$current_pass"
-    export AAP_INSTALLER_SSH_KEY="${AAP_INSTALLER_SSH_KEY:-$HOME/.ssh/id_ed25519}"
+    if [[ -z "${AAP_INSTALLER_SSH_KEY:-}" || ! -f "${AAP_INSTALLER_SSH_KEY}" ]]; then
+        export AAP_INSTALLER_SSH_KEY="${CONTROLLER_STATE_HOME}/.ssh/id_ed25519"
+    fi
     export AAP_INSTALLER_USER="${AAP_INSTALLER_USER:-$USER}"
 
-    set_v_key "RHSM_PASSWORD" "$RHSM_PASSWORD"
-    set_v_key "RH_OFFLINE_TOKEN" "$RH_OFFLINE_TOKEN"
-    set_v_key "RH_AH_TOKEN" "$RH_AH_TOKEN"
+    set_v_key "RHSM_PASSWORD" "$RHSM_PASSWORD" || return 1
+    set_v_key "RHSM_ORG_ID" "$RHSM_ORG_ID" || return 1
+    set_v_key "RH_OFFLINE_TOKEN" "$RH_OFFLINE_TOKEN" || return 1
+    set_v_key "RH_AH_TOKEN" "$RH_AH_TOKEN" || return 1
+    set_v_key "ADMIN_PASSWORD" "$ADMIN_PASSWORD" || return 1
     set_v_key "AAP_REMOTE_IP" "$AAP_REMOTE_IP"
     set_v_key "AAP_CONTROLLER_IP" "$AAP_REMOTE_IP"
     set_v_key "AAP_SHORTNAME" "$AAP_SHORTNAME"
@@ -256,7 +271,7 @@ ensure_rhsm_credentials_exist() {
     set_v_key "AAP_CONTROLLER_FQDN" "$AAP_REMOTE_FQDN"
     set_v_key "AAP_REMOTE_USER" "$AAP_REMOTE_USER"
     set_v_key "INSTALL_SCOPE" "$INSTALL_SCOPE"
-    set_v_key "ROOT_PASSWORD" "$ROOT_PASSWORD"
+    set_v_key "ROOT_PASSWORD" "$ROOT_PASSWORD" || return 1
     set_v_key "INVENTORY_GROWTH_USERNAME" "$INVENTORY_GROWTH_USERNAME"
     set_v_key "INVENTORY_GROWTH_PASSWORD" "$INVENTORY_GROWTH_PASSWORD"
     set_v_key "REDHAT_REGISTRY_USERNAME" "$REDHAT_REGISTRY_USERNAME"
@@ -276,7 +291,10 @@ ensure_rhsm_credentials_exist() {
     echo "  INSTALL_SCOPE: ${INSTALL_SCOPE}"
     echo "  INVENTORY_GROWTH_USERNAME: ${INVENTORY_GROWTH_USERNAME}"
     echo "  INVENTORY_GROWTH_PASSWORD: ${INVENTORY_GROWTH_PASSWORD}"
+    echo "  ADMIN_PASSWORD: [$( [[ -n "$ADMIN_PASSWORD" ]] && echo "PRESENT" || echo "NOT SET" )]"
     echo "  RHSM_PASSWORD: [$( [[ -n "$RHSM_PASSWORD" ]] && echo "PRESENT" || echo "NOT SET" )]"
+    echo "  RHSM_ORG_ID: ${RHSM_ORG_ID}"
+    echo "  RHSM_ACTIVATION_KEY: [$( [[ -n "${RHSM_ACTIVATION_KEY:-}" ]] && echo "PRESENT" || echo "NOT SET" )]"
     echo "  RH_OFFLINE_TOKEN: [$( [[ -n "$RH_OFFLINE_TOKEN" ]] && echo "PRESENT" || echo "NOT SET" )]"
     echo "  RH_AH_TOKEN: [$( [[ -n "$RH_AH_TOKEN" ]] && echo "PRESENT" || echo "NOT SET" )]"
     echo "  ROOT_PASSWORD: [$( [[ -n "$ROOT_PASSWORD" ]] && echo "PRESENT" || echo "NOT SET" )]"

@@ -130,7 +130,7 @@ bootstrap_remote_admin() {
     local scope
     scope="$(get_install_scope)"
     if [[ "$scope" == "local" ]]; then
-        log "[INFO] Local installation selected ($scope). Skipping remote SSH bootstrap."
+        log "Local installation selected ($scope). Skipping remote SSH bootstrap."
         return 0
     fi
 
@@ -154,7 +154,7 @@ bootstrap_remote_admin() {
         fi
     fi
 
-    log "[INFO] Bootstrapping target host ${target_host} via root@${target_host}..."
+    log "Bootstrapping target host ${target_host} via root@${target_host}..."
 
     local ssh_cmd=(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10)
     if [[ -n "${root_p:-}" ]] && command -v sshpass &>/dev/null; then
@@ -169,7 +169,7 @@ fi
 echo "admin ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/admin
 chmod 0440 /etc/sudoers.d/admin
 REMOTE_BOOTSTRAP
-    log "[OK] Target host ${target_host} bootstrapped successfully."
+    ok "Target host ${target_host} bootstrapped successfully."
 }
 
 # shellcheck shell=bash
@@ -391,7 +391,7 @@ run_preflight_resource_checks() {
             echo "[ERR] Preflight check failed: Remote target host IP/FQDN is empty!" >&2
             return 1
         fi
-        log "[INFO] Running remote preflight resource checks on target host (${target_fqdn:-$target_host} / ${target_host})..."
+        log "Running remote preflight resource checks on target host (${target_fqdn:-$target_host} / ${target_host})..."
         ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "admin@${target_host}" bash -s <<'REMOTE_CHECKS'
 set -euo pipefail
 vcpus=$(nproc)
@@ -408,7 +408,7 @@ if command -v podman &>/dev/null; then
 fi
 REMOTE_CHECKS
     else
-        log "[INFO] Running local preflight resource checks on localhost..."
+        log "Running local preflight resource checks on localhost..."
         vcpus=$(nproc)
         ram_gb=$(free -g | awk '/^Mem:/{print $2}')
         disk_gb=$(df -BG / | awk 'NR==2 {print $4}' | tr -d 'G')

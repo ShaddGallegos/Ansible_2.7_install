@@ -25,7 +25,7 @@ get_supported_ansible_playbook() {
     rm -rf "${venv_dir}"
   fi
 
-  candidate="$(command -v ansible-playbook -i "${SCRIPT_DIR}/aap_workflow_project/inventory/controller.ini" ${ANSIBLE_VERBOSITY:-} 2>/dev/null || true)"
+  candidate="$(command -v ansible-playbook 2>/dev/null || true)"
   if [[ -n "${candidate}" ]]; then
     version="$(${candidate} --version 2>/dev/null | head -n1 || true)"
     minor="$(sed -nE 's/.*core 2\.([0-9]+).*/\1/p' <<< "${version}")"
@@ -46,21 +46,22 @@ get_supported_ansible_playbook() {
     return 1
   fi
 
-  log "Creating isolated ansible-core 2.16 runtime at ${venv_dir}."
-  "${python_cmd}" -m venv "${venv_dir}"
+  log "Creating isolated ansible-core 2.16 runtime at ${venv_dir}." >&2
+  "${python_cmd}" -m venv "${venv_dir}" >&2
   "${venv_dir}/bin/python" -m pip install --disable-pip-version-check \
-    -r "${SCRIPT_DIR}/requirements-runtime.txt"
+    -r "${SCRIPT_DIR}/requirements-runtime.txt" >&2
   printf '%s' "${venv_dir}/bin/ansible-playbook"
 }
 
 run_project_playbook() {
   local playbook="$1"
   local extra_vars_file="${2:-}"
-  local ansible_playbook inventory config
+  local inventory_override="${3:-}"
+  local ansible_playbook inventory config ansible_verbosity
   local -a command
 
   ansible_playbook="$(get_supported_ansible_playbook)" || return 1
-  inventory="${SCRIPT_DIR}/aap_workflow_project/inventory/controller.ini"
+  inventory="${inventory_override:-${SCRIPT_DIR}/aap_workflow_project/inventory/controller.ini}"
   config="${SCRIPT_DIR}/aap_workflow_project/ansible.cfg"
 
   [[ -f "${inventory}" ]] || { err "Generated inventory not found: ${inventory}"; return 1; }
@@ -82,6 +83,10 @@ run_project_playbook() {
   fi
 
   command=("${ansible_playbook}" -i "${inventory}")
+  ansible_verbosity="$(normalize_ansible_verbosity "${ANSIBLE_VERBOSITY:-}")"
+  if [[ -n "${ansible_verbosity}" ]]; then
+    command+=("${ansible_verbosity}")
+  fi
 
   # Include repository-wide env file if present
   if [[ -n "${ENV_FILE:-}" && -f "${ENV_FILE}" ]]; then

@@ -1,0 +1,63 @@
+---
+- name: Register target with Red Hat Subscription Management
+  hosts: controller
+  gather_facts: false
+
+  tasks:
+    - name: Check current RHSM registration
+      ansible.builtin.command: subscription-manager identity
+      register: rhsm_identity
+      changed_when: false
+      failed_when: false
+
+    - name: Register with RHSM activation key
+      ansible.builtin.command:
+        argv:
+          - subscription-manager
+          - register
+          - --org
+          - "{{ RHSM_ORG_ID }}"
+          - --activationkey
+          - "{{ RHSM_ACTIVATION_KEY }}"
+      register: rhsm_activation_registration
+      changed_when: rhsm_activation_registration.rc == 0
+      failed_when: false
+      no_log: true
+      when:
+        - rhsm_identity.rc != 0
+        - RHSM_ACTIVATION_KEY | default('') | length > 0
+
+    - name: Register with RHSM username and password
+      ansible.builtin.command:
+        argv:
+          - subscription-manager
+          - register
+          - --username
+          - "{{ RHSM_USERNAME }}"
+          - --password
+          - "{{ RHSM_PASSWORD }}"
+          - --org
+          - "{{ RHSM_ORG_ID }}"
+      register: rhsm_password_registration
+      changed_when: rhsm_password_registration.rc == 0
+      failed_when: false
+      no_log: true
+      when:
+        - rhsm_identity.rc != 0
+        - RHSM_ACTIVATION_KEY | default('') | length == 0
+
+    - name: Report rejected RHSM activation key
+      ansible.builtin.fail:
+        msg: AAP27_RHSM_CREDENTIALS_REJECTED
+      when:
+        - rhsm_identity.rc != 0
+        - RHSM_ACTIVATION_KEY | default('') | length > 0
+        - rhsm_activation_registration.rc != 0
+
+    - name: Report rejected RHSM username or password
+      ansible.builtin.fail:
+        msg: AAP27_RHSM_CREDENTIALS_REJECTED
+      when:
+        - rhsm_identity.rc != 0
+        - RHSM_ACTIVATION_KEY | default('') | length == 0
+        - rhsm_password_registration.rc != 0
