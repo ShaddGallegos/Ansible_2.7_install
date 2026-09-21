@@ -83,10 +83,14 @@ test_startup_requires_all_primary_secrets() {
   local collector_body
   collector_body="$(declare -f ensure_rhsm_credentials_exist)"
 
-  assert_contains "startup requires offline token" \
-    'read_secret_prompt current_offline "Enter RH_OFFLINE_TOKEN' "${collector_body}"
+  assert_eq "startup does not require an offline token" "false" \
+    "$([[ "${collector_body}" == *'read_secret_prompt current_offline'* ]] && echo true || echo false)"
   assert_contains "startup requires RHSM organization ID" \
     'Enter RHSM_ORG_ID' "${collector_body}"
+  assert_contains "startup offers optional RHSM activation key" \
+    'Enter optional RHSM_ACTIVATION_KEY' "${collector_body}"
+  assert_contains "startup persists RHSM activation key" \
+    'set_v_key "RHSM_ACTIVATION_KEY"' "${collector_body}"
   assert_contains "startup reconfirms username after password rejection" \
     'if [[ -z "$saved_pass" ]]' "${collector_body}"
   assert_contains "startup requires Automation Hub token" \
@@ -105,6 +109,46 @@ test_startup_requires_all_primary_secrets() {
     'ADMIN_PASSWORD: [' "${collector_body}"
   assert_eq "remote bootstrap retains canonical root SSH password" "false" \
     "$([[ "$(declare -f provision_remote_admin_via_ssh)" == *'delete_env_key "ROOT_PASSWORD"'* ]] && echo true || echo false)"
+}
+
+test_installer_passwords_default_from_admin_password() {
+  local output
+
+  output="$(
+    load_env() { :; }
+    save_env_kv() { printf 'saved:%s=%s\n' "$1" "$2"; }
+    read_secret_prompt() { printf 'unexpected-prompt:%s\n' "$1"; return 1; }
+
+    ADMIN_PASSWORD="redhat"
+    CONTROLLER_ADMIN_PASSWORD="explicit-controller-password"
+    unset CONTROLLER_PG_PASSWORD HUB_ADMIN_PASSWORD HUB_PG_PASSWORD
+    unset EDA_ADMIN_PASSWORD EDA_PG_PASSWORD POSTGRESQL_ADMIN_PASSWORD
+    unset GATEWAY_ADMIN_PASSWORD GATEWAY_PG_PASSWORD
+    unset AUTOMATIONMETRICS_ADMIN_PASSWORD AUTOMATIONMETRICS_PG_PASSWORD
+    unset AUTOMATIONMETRICS_CONTROLLER_READ_PG_PASSWORD
+    unset AUTOMATIONMETRICS_HUB_READ_PG_PASSWORD
+
+    ensure_installer_secrets
+    printf 'controller-admin=%s\n' "${CONTROLLER_ADMIN_PASSWORD}"
+    for key in \
+      CONTROLLER_PG_PASSWORD HUB_ADMIN_PASSWORD HUB_PG_PASSWORD \
+      EDA_ADMIN_PASSWORD EDA_PG_PASSWORD POSTGRESQL_ADMIN_PASSWORD \
+      GATEWAY_ADMIN_PASSWORD GATEWAY_PG_PASSWORD \
+      AUTOMATIONMETRICS_ADMIN_PASSWORD AUTOMATIONMETRICS_PG_PASSWORD \
+      AUTOMATIONMETRICS_CONTROLLER_READ_PG_PASSWORD \
+      AUTOMATIONMETRICS_HUB_READ_PG_PASSWORD; do
+      printf '%s=%s\n' "${key}" "${!key}"
+    done
+  )"
+
+  assert_eq "installer password defaults do not prompt" "false" \
+    "$([[ "${output}" == *"unexpected-prompt:"* ]] && echo true || echo false)"
+  assert_contains "explicit component password remains unchanged" \
+    "controller-admin=explicit-controller-password" "${output}"
+  assert_eq "all missing component passwords inherit admin password" "12" \
+    "$(grep -c '^[A-Z_]*=redhat$' <<< "${output}")"
+  assert_eq "all inherited component passwords are persisted" "12" \
+    "$(grep -c '^saved:.*=redhat$' <<< "${output}")"
 }
 
 test_derive_domain_from_fqdn() {
@@ -196,6 +240,154 @@ EOF
 
   VAULT_PASS_FILE="${original_vault_pass_file}"
   PROJECT_KEY="${original_project_key}"
+  rm -rf "${tmp_dir}"
+}
+
+test_all_credentials_round_trip_encrypted_state() {
+  local test_status=0
+
+  (
+    set -euo pipefail
+    local tmp_dir plaintext_file key value
+    local -a credential_keys
+    tmp_dir="$(mktemp -d)"
+    trap 'rm -rf "${tmp_dir}"' EXIT
+    ENV_FILE="${tmp_dir}/env.yml"
+    plaintext_file="${tmp_dir}/env.plain.yml"
+    VAULT_PASS_FILE="${tmp_dir}/.vaultpass.txt"
+    PROJECT_KEY="credential_test"
+    CONTROLLER_STATE_HOME="${tmp_dir}"
+    credential_keys=()
+
+    for key in "${AAP27_STATE_KEYS[@]}"; do
+      if [[ "${key}" =~ (USERNAME|PASSWORD|TOKEN|ACTIVATION_KEY)$ ]]; then
+        credential_keys+=("${key}")
+      fi
+    done
+
+    for key in "${credential_keys[@]}"; do
+      value="value for ${key} with spaces !@#%+='quote"
+      printf '%s\t%s\n' "${key}" "${value}"
+    done | jq -Rn --arg project "${PROJECT_KEY^^}" '
+      [inputs | split("\t") | {key: .[0], value: .[1]}]
+      | reduce .[] as $item ({}; .[$item.key] = $item.value)
+      | {($project): .}
+    ' > "${plaintext_file}"
+
+    printf '%s\n' 'credential-test-vault-password' > "${VAULT_PASS_FILE}"
+    chmod 600 "${VAULT_PASS_FILE}"
+    ansible-vault encrypt --vault-password-file "${VAULT_PASS_FILE}" \
+      --output "${ENV_FILE}" "${plaintext_file}" >/dev/null
+
+    for key in "${credential_keys[@]}"; do
+      unset "${key}"
+    done
+    load_env
+    for key in "${credential_keys[@]}"; do
+      expected="value for ${key} with spaces !@#%+='quote"
+      [[ "${!key:-}" == "${expected}" ]]
+    done
+    head -c 14 "${ENV_FILE}" | grep -q '^\$ANSIBLE_VAULT'
+  ) || test_status=$?
+
+  assert_eq "all usernames, passwords, and tokens round-trip through encrypted state" \
+    "0" "${test_status}"
+}
+
+test_rhsm_registration_forwards_credentials_exactly() {
+  local tmp_dir captured_vars
+  tmp_dir="$(mktemp -d)"
+  captured_vars="${tmp_dir}/registration-vars.json"
+
+  (
+    load_env() { :; }
+    run_project_playbook() {
+      cp "$2" "${captured_vars}"
+    }
+    RHSM_USERNAME="user+rhsm@example.test"
+    RHSM_PASSWORD="password with spaces !@#%+='quote"
+    RHSM_ORG_ID="1234567"
+    RHSM_ACTIVATION_KEY="activation key !@#%+='quote"
+    register_remote_rhsm_via_ansible "192.0.2.20" "root password !@#%+='quote"
+  ) >/dev/null
+
+  assert_eq "registration forwards root SSH password exactly" \
+    "root password !@#%+='quote" "$(jq -r '.ansible_password' "${captured_vars}")"
+  assert_eq "registration forwards RHSM username exactly" \
+    "user+rhsm@example.test" "$(jq -r '.RHSM_USERNAME' "${captured_vars}")"
+  assert_eq "registration forwards RHSM password exactly" \
+    "password with spaces !@#%+='quote" "$(jq -r '.RHSM_PASSWORD' "${captured_vars}")"
+  assert_eq "registration forwards RHSM organization exactly" \
+    "1234567" "$(jq -r '.RHSM_ORG_ID' "${captured_vars}")"
+  assert_eq "registration forwards RHSM activation key exactly" \
+    "activation key !@#%+='quote" "$(jq -r '.RHSM_ACTIVATION_KEY' "${captured_vars}")"
+
+  rm -rf "${tmp_dir}"
+}
+
+test_offline_token_exchange_and_fallback() {
+  local tmp_dir output exchange_body download_body remote_download_playbook
+  tmp_dir="$(mktemp -d)"
+  TOKEN_TEST_REQUEST="${tmp_dir}/request"
+  TOKEN_TEST_ARGS="${tmp_dir}/args"
+  export TOKEN_TEST_REQUEST TOKEN_TEST_ARGS
+
+  (
+    curl() {
+      printf '%s\n' "$*" > "${TOKEN_TEST_ARGS}"
+      cat > "${TOKEN_TEST_REQUEST}"
+      printf '%s\n' '{"access_token":"temporary-access-token","expires_in":900}'
+    }
+    exchange_red_hat_offline_token "offline token with spaces !@#%+='quote"
+    assert_eq "offline token exchange returns access token" \
+      "temporary-access-token" "${RED_HAT_ACCESS_TOKEN}"
+  )
+  assert_eq "offline token is sent in request body exactly" \
+    "offline token with spaces !@#%+='quote" "$(cat "${TOKEN_TEST_REQUEST}")"
+  assert_eq "offline token is absent from curl process arguments" "false" \
+    "$([[ "$(cat "${TOKEN_TEST_ARGS}")" == *"offline token with spaces"* ]] && echo true || echo false)"
+
+  (
+    curl() {
+      cat >/dev/null
+      printf '%s\n' '{"error":"invalid_grant"}'
+    }
+    assert_status "invalid offline token is rejected" 1 \
+      exchange_red_hat_offline_token "invalid-token"
+  )
+
+  output="$({
+    NONINTERACTIVE=true
+    unset RH_OFFLINE_TOKEN RED_HAT_ACCESS_TOKEN
+    ensure_red_hat_access_token
+    printf 'access-token=%s\n' "${RED_HAT_ACCESS_TOKEN:-}"
+  } 2>&1)"
+  assert_contains "unattended mode falls back to RHSM credentials" \
+    "continuing with RHSM username/password authentication" "${output}"
+  assert_contains "unattended fallback leaves access token empty" \
+    "access-token=" "${output}"
+
+  exchange_body="$(declare -f exchange_red_hat_offline_token)"
+  download_body="$(declare -f download_bundle)"
+  remote_download_playbook="${SCRIPT_DIR}/aap_workflow_project/playbooks/download_bundle.yml"
+  assert_contains "offline token flow uses Red Hat SSO endpoint" \
+    'RED_HAT_SSO_TOKEN_URL' "${exchange_body}"
+  assert_contains "offline token flow uses rhsm-api client" \
+    'client_id=rhsm-api' "${exchange_body}"
+  assert_contains "interactive recovery opens Red Hat API token page" \
+    'xdg-open "${RED_HAT_API_TOKEN_URL}"' "$(declare -f ensure_red_hat_access_token)"
+  assert_contains "local download uses temporary access token" \
+    'Authorization: Bearer ${RED_HAT_ACCESS_TOKEN}' "${download_body}"
+  assert_eq "local download never uses offline token directly as bearer" "false" \
+    "$([[ "${download_body}" == *'Authorization: Bearer ${RH_OFFLINE_TOKEN}'* ]] && echo true || echo false)"
+  assert_status "remote download supports bearer access token" 0 \
+    grep -q "Authorization.*Bearer.*effective_red_hat_access_token" "${remote_download_playbook}"
+  assert_status "remote extraction tempfile uses supported parent path" 0 \
+    bash -c "grep -A5 'name: Create temporary extraction directory' '$remote_download_playbook' | grep -q 'path:.*admin_download_dir'"
+  assert_status "remote extraction tempfile does not use unsupported dir parameter" 1 \
+    bash -c "grep -A5 'name: Create temporary extraction directory' '$remote_download_playbook' | grep -q '^[[:space:]]*dir:'"
+
+  unset TOKEN_TEST_REQUEST TOKEN_TEST_ARGS
   rm -rf "${tmp_dir}"
 }
 
@@ -493,6 +685,42 @@ EOF
   rm -rf "${tmp_dir}"
 }
 
+test_2_7_4_rootless_env_hotfix_preserves_yaml() {
+  local hotfix_main hotfix_tasks hotfix_block
+  hotfix_main="${SCRIPT_DIR}/roles/aap27_bundle_hotfixes/tasks/main.yml"
+  hotfix_tasks="${SCRIPT_DIR}/roles/aap27_bundle_hotfixes/tasks/rootless_podman_env.yml"
+  hotfix_block="$(cat "${hotfix_tasks}")"
+
+  assert_status "rootless env hotfix uses focused task owner" 0 \
+    grep -qF 'ansible.builtin.include_tasks: rootless_podman_env.yml' "${hotfix_main}"
+
+  assert_contains "rootless env hotfix preserves replacement trailing newline" \
+    "replace: |" "${hotfix_block}"
+  assert_eq "rootless env hotfix does not strip replacement trailing newline" "false" \
+    "$([[ "${hotfix_block}" == *"replace: |-"* ]] && echo true || echo false)"
+  assert_contains "rootless env hotfix repairs concatenated HOME export" \
+    "Repair previously concatenated rootless Podman exports" "${hotfix_block}"
+  assert_contains "rootless env repair inserts a newline between exports" \
+    "replace: '\\1\\n\\2'" "${hotfix_block}"
+}
+
+test_nested_installer_validates_patched_yaml_first() {
+  local install_playbook validation_block validation_line execution_line
+  install_playbook="${SCRIPT_DIR}/aap_workflow_project/playbooks/install_aap.yml"
+  validation_block="$(sed -n \
+    '/name: Validate patched AAP containerized playbook syntax/,/name: Run selected AAP containerized playbook/p' \
+    "${install_playbook}")"
+  validation_line="$(grep -nF 'name: Validate patched AAP containerized playbook syntax' "${install_playbook}" | cut -d: -f1)"
+  execution_line="$(grep -nF 'name: Run selected AAP containerized playbook' "${install_playbook}" | cut -d: -f1)"
+
+  assert_status "nested installer includes patched YAML syntax validation" 0 \
+    grep -qF "'--syntax-check'" "${install_playbook}"
+  assert_contains "nested syntax validation disables bundle-local logging" \
+    "ANSIBLE_LOG_PATH: /dev/null" "${validation_block}"
+  assert_eq "nested installer validates before execution" "true" \
+    "$([[ -n "${validation_line}" && -n "${execution_line}" && ${validation_line} -lt ${execution_line} ]] && echo true || echo false)"
+}
+
 test_remote_scope_routes_target_operations() {
   local tmp_dir
   tmp_dir="$(mktemp -d)"
@@ -533,7 +761,6 @@ test_complete_install_pipeline_order() {
     configure_install_scope() { printf '%s\n' scope >> "${SCOPE_CALLS_FILE}"; INSTALL_SCOPE=remote; }
     get_install_scope() { printf '%s' remote; }
     get_install_target_host() { printf '%s' 192.0.2.15; }
-    bootstrap_remote_admin() { :; }
     setup_admin_user() { printf '%s\n' admin >> "${SCOPE_CALLS_FILE}"; }
     run_preflight_resource_checks() { printf '%s\n' preflight >> "${SCOPE_CALLS_FILE}"; }
     prepare_install_target() { printf '%s\n' security-prework >> "${SCOPE_CALLS_FILE}"; }
@@ -556,7 +783,6 @@ test_complete_install_pipeline_order() {
     configure_install_scope() { printf '%s\n' scope >> "${SCOPE_CALLS_FILE}"; INSTALL_SCOPE=remote; }
     get_install_scope() { printf '%s' remote; }
     get_install_target_host() { printf '%s' 192.0.2.15; }
-    bootstrap_remote_admin() { :; }
     setup_admin_user() { printf '%s\n' admin-failed >> "${SCOPE_CALLS_FILE}"; return 1; }
     run_complete_install_pipeline
   ) >/dev/null 2>&1 || pipeline_status=$?
@@ -597,14 +823,18 @@ test_remote_setup_runs_repository_bootstrap() {
 }
 
 test_remote_root_bootstrap_contract() {
-  local bootstrap_body registration_body repos_line install_line ssh_config_line restart_line marker_line
+  local bootstrap_body registration_body registration_playbook
+  local rhc_line activation_line password_line repos_line install_line ssh_config_line restart_line marker_line
   bootstrap_body="$(declare -f provision_remote_admin_via_ssh)"
   registration_body="$(declare -f register_remote_rhsm_via_ansible)"
+  registration_playbook="${SCRIPT_DIR}/aap_workflow_project/playbooks/register_rhsm.yml"
 
   assert_contains "remote bootstrap readiness requires completion marker" \
     "/var/lib/aap27-bootstrap-complete" "${bootstrap_body}"
   assert_contains "remote bootstrap readiness requires podman" \
     "command -v podman" "${bootstrap_body}"
+  assert_contains "remote bootstrap readiness miss starts preparation without warning" \
+    'log "Bootstrap readiness not yet confirmed' "${bootstrap_body}"
   assert_contains "remote bootstrap collects RHSM credentials" \
     "ensure_registry_credentials" "${bootstrap_body}"
   assert_contains "remote bootstrap registers RHEL through Ansible" \
@@ -622,7 +852,18 @@ test_remote_root_bootstrap_contract() {
     "${SCRIPT_DIR}/aap_workflow_project/playbooks/register_rhsm.yml"
   assert_status "RHSM playbook keeps password result separate" 0 \
     grep -q "register: rhsm_password_registration" \
-    "${SCRIPT_DIR}/aap_workflow_project/playbooks/register_rhsm.yml"
+    "${registration_playbook}"
+  assert_status "RHSM playbook attempts Red Hat Connector" 0 \
+    grep -q -- '- rhc' "${registration_playbook}"
+  assert_status "RHSM password fallback is independent of activation-key presence" 1 \
+    bash -c "grep -A20 'name: Register with RHSM username and password' '$registration_playbook' | grep -q 'RHSM_ACTIVATION_KEY.*length == 0'"
+  rhc_line="$(grep -n 'name: Register with Red Hat Connector' "${registration_playbook}" | cut -d: -f1)"
+  activation_line="$(grep -n 'name: Register with RHSM activation key' "${registration_playbook}" | cut -d: -f1)"
+  password_line="$(grep -n 'name: Register with RHSM username and password' "${registration_playbook}" | cut -d: -f1)"
+  assert_eq "RHSM registration tries rhc before activation key" "1" \
+    "$(( rhc_line < activation_line ))"
+  assert_eq "RHSM registration tries activation key before password fallback" "1" \
+    "$(( activation_line < password_line ))"
   assert_eq "RHSM registration does not prompt during execution" "false" \
     "$([[ "${registration_body}" == *"read -r"* || "${registration_body}" == *"ask_value"* || "${registration_body}" == *"read_secret_prompt"* ]] && echo true || echo false)"
   assert_contains "RHSM registration clears rejected activation key" \
@@ -775,6 +1016,7 @@ test_env_schema_defines_supported_variables() {
     EDA_PG_PASSWORD AUTOMATIONMETRICS_ADMIN_PASSWORD
     AUTOMATIONMETRICS_PG_PASSWORD
     AUTOMATIONMETRICS_CONTROLLER_READ_PG_PASSWORD
+    AUTOMATIONMETRICS_HUB_READ_PG_PASSWORD
   )
 
   for key in "${required_keys[@]}"; do
@@ -792,7 +1034,9 @@ test_env_schema_defines_supported_variables() {
   assert_status "local bundle prompt persists canonical path" 0 \
     grep -q 'save_env_kv "LOCAL_BUNDLE_PATH"' "${SCRIPT_DIR}/aap27_installer.sh"
   assert_status "installer secret collection includes admin password" 0 \
-    grep -q 'ADMIN_PASSWORD|Enter admin_password' "${SCRIPT_DIR}/lib/state.sh"
+    grep -q 'ensure_required_secret "ADMIN_PASSWORD"' "${SCRIPT_DIR}/lib/state.sh"
+  assert_status "installer secrets default component passwords from admin password" 0 \
+    grep -q 'ensure_required_secret.*"$prompt".*"${ADMIN_PASSWORD}"' "${SCRIPT_DIR}/lib/state.sh"
   assert_status "controller workflow validates required credentials" 0 \
     grep -q 'Validate controller resource credentials' \
     "${SCRIPT_DIR}/aap_workflow_project/playbooks/create_controller_resources.yml"
@@ -897,6 +1141,10 @@ test_reconfigure_environment_workflow() {
       printf 'secret:%s\n' "$1" >> "${RECONFIGURE_CALLS_FILE}"
       printf -v "$1" 'configured-%s' "$1"
     }
+    reconfigure_optional_secret_value() {
+      printf 'optional-secret:%s\n' "$1" >> "${RECONFIGURE_CALLS_FILE}"
+      printf -v "$1" 'configured-%s' "$1"
+    }
     reconfigure_text_value() {
       printf 'text:%s\n' "$1" >> "${RECONFIGURE_CALLS_FILE}"
       printf -v "$1" 'configured-%s' "$1"
@@ -910,6 +1158,8 @@ test_reconfigure_environment_workflow() {
   assert_contains "reconfigure workflow prompts admin password" "secret:ADMIN_PASSWORD" "${output}"
   assert_contains "reconfigure workflow prompts RHSM username" "text:RHSM_USERNAME" "${output}"
   assert_contains "reconfigure workflow prompts RHSM password" "secret:RHSM_PASSWORD" "${output}"
+  assert_contains "reconfigure workflow prompts optional activation key" \
+    "optional-secret:RHSM_ACTIVATION_KEY" "${output}"
   assert_contains "reconfigure workflow prompts offline token" "secret:RH_OFFLINE_TOKEN" "${output}"
   assert_contains "reconfigure workflow prompts Automation Hub token" "secret:RH_AH_TOKEN" "${output}"
   assert_contains "reconfigure workflow prompts bundle URL" "text:BUNDLE_URL" "${output}"
@@ -966,11 +1216,15 @@ echo "== aap27_installer.sh regression tests =="
 test_ask_value_and_ask_yn_noninteractive
 test_required_prompts_reject_empty_values
 test_startup_requires_all_primary_secrets
+test_installer_passwords_default_from_admin_password
 test_derive_domain_from_fqdn
 test_build_inventory_host_line
 test_extract_bundle_detects_version_mismatch
 test_get_preferred_remote_user_remote_scope
 test_state_file_is_data_not_code
+test_all_credentials_round_trip_encrypted_state
+test_rhsm_registration_forwards_credentials_exactly
+test_offline_token_exchange_and_fallback
 test_legacy_env_file_migrates_to_yaml
 test_collection_patch_version_gate
 test_sourcing_preserves_caller_options
@@ -982,6 +1236,8 @@ test_explicit_target_reconfiguration_prompts
 test_configurable_admin_identity
 test_rootless_playbook_wrapper_hides_secrets
 test_2_7_4_tls_hotfix_is_idempotent
+test_2_7_4_rootless_env_hotfix_preserves_yaml
+test_nested_installer_validates_patched_yaml_first
 test_remote_scope_routes_target_operations
 test_complete_install_pipeline_order
 test_remote_install_prework_relaxes_security

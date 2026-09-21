@@ -16,6 +16,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 BUNDLE_FILE="ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64.tar.gz"
 BUNDLE_URL_DEFAULT="https://access.cdn.redhat.com/content/origin/files/sha256/5c/5c0e1834c1ae609ce840865b5aa279b5c5bde9118856b326f77cc5c8bf92d9af/ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64.tar.gz"
 BUNDLE_DIR_NAME="ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64"
+RED_HAT_API_TOKEN_URL="https://access.redhat.com/management/api"
+RED_HAT_SSO_TOKEN_URL="https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token"
 ADMIN_USER="${ADMIN_USER:-admin}"
 ADMIN_HOME="${ADMIN_HOME:-/home/${ADMIN_USER}}"
 # Local installer state (Downloads/env file) lives under the invoking account's
@@ -778,6 +780,68 @@ read_secret_prompt() {
   done
 }
 
+exchange_red_hat_offline_token() {
+  local offline_token="${1:-}"
+  local token_response access_token
+
+  [[ -n "${offline_token}" ]] || return 1
+  command -v curl >/dev/null 2>&1 || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+
+  token_response="$(printf '%s' "${offline_token}" | curl --silent --show-error --fail \
+    --request POST \
+    --data 'grant_type=refresh_token' \
+    --data 'client_id=rhsm-api' \
+    --data-urlencode 'refresh_token@-' \
+    "${RED_HAT_SSO_TOKEN_URL}")" || return 1
+  access_token="$(jq -er '.access_token | strings | select(length > 0)' <<< "${token_response}")" || return 1
+  export RED_HAT_ACCESS_TOKEN="${access_token}"
+}
+
+ensure_red_hat_access_token() {
+  local entered_token
+
+  unset RED_HAT_ACCESS_TOKEN
+  if [[ -n "${RH_OFFLINE_TOKEN:-}" ]]; then
+    if exchange_red_hat_offline_token "${RH_OFFLINE_TOKEN}"; then
+      ok "Red Hat offline token validated; temporary access token acquired."
+      return 0
+    fi
+    warn "The stored Red Hat offline token is invalid or could not be exchanged."
+    save_env_kv "RH_OFFLINE_TOKEN" "" || return 1
+    unset RH_OFFLINE_TOKEN
+  fi
+
+  if [[ "${NONINTERACTIVE:-false}" == "true" || ! -t 0 ]]; then
+    warn "No valid offline token is available; continuing with RHSM username/password authentication."
+    return 0
+  fi
+
+  printf '%s\n' \
+    "Generate an offline token at ${RED_HAT_API_TOKEN_URL}." \
+    "Sign in, click Generate Token, then paste the token below."
+  if command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "${RED_HAT_API_TOKEN_URL}" >/dev/null 2>&1 || true
+  fi
+
+  while true; do
+    read -r -s -p "Enter RH_OFFLINE_TOKEN [ENTER to use username/password]: " entered_token
+    echo
+    if [[ -z "${entered_token}" ]]; then
+      warn "Continuing with RHSM username/password authentication."
+      return 0
+    fi
+    if exchange_red_hat_offline_token "${entered_token}"; then
+      RH_OFFLINE_TOKEN="${entered_token}"
+      export RH_OFFLINE_TOKEN
+      save_env_kv "RH_OFFLINE_TOKEN" "${RH_OFFLINE_TOKEN}" || return 1
+      ok "Red Hat offline token validated and stored securely."
+      return 0
+    fi
+    warn "Red Hat rejected that offline token. Generate a new token or press ENTER to use username/password."
+  done
+}
+
 run_remote_prework() {
   local disable_firewall="${1:-}"
   local set_selinux_permissive="${2:-}"
@@ -1085,17 +1149,14 @@ register_remote_rhsm_via_ansible() {
   if [[ -n "${RHSM_ACTIVATION_KEY:-}" ]]; then
     save_env_kv "RHSM_ACTIVATION_KEY" "" || return 1
     unset RHSM_ACTIVATION_KEY
-    err "Red Hat rejected the stored RHSM activation key."
-    err "The rejected activation key was cleared from ${ENV_FILE}; update it before rerunning the installer."
-  else
-    save_env_kv "RHSM_USERNAME" "" || return 1
-    save_env_kv "RHSM_PASSWORD" "" || return 1
-    save_env_kv "REDHAT_REGISTRY_USERNAME" "" || return 1
-    save_env_kv "REDHAT_REGISTRY_PASSWORD" "" || return 1
-    unset RHSM_USERNAME RHSM_PASSWORD REDHAT_REGISTRY_USERNAME REDHAT_REGISTRY_PASSWORD
-    err "Red Hat rejected the stored RHSM username or password."
-    err "The rejected username and password were cleared from ${ENV_FILE}; rerun the installer to enter both during startup."
   fi
+  save_env_kv "RHSM_USERNAME" "" || return 1
+  save_env_kv "RHSM_PASSWORD" "" || return 1
+  save_env_kv "REDHAT_REGISTRY_USERNAME" "" || return 1
+  save_env_kv "REDHAT_REGISTRY_PASSWORD" "" || return 1
+  unset RHSM_USERNAME RHSM_PASSWORD REDHAT_REGISTRY_USERNAME REDHAT_REGISTRY_PASSWORD
+  err "Red Hat Connector, activation-key, and username/password registration all failed."
+  err "Rejected registration credentials were cleared from ${ENV_FILE}; update them before rerunning the installer."
   return 1
 }
 
@@ -1140,7 +1201,7 @@ provision_remote_admin_via_ssh() {
     return 0
   fi
 
-  warn "Remote bootstrap is incomplete on ${remote_host}; root preparation is required."
+  log "Bootstrap readiness not yet confirmed on ${remote_host}; starting root preparation."
   ensure_registry_credentials || {
     err "RHSM credentials are required to register and bootstrap ${remote_host}."
     return 1
@@ -1313,6 +1374,7 @@ download_bundle() {
   local retry_depth="${1:-0}"
   load_env
   ensure_registry_credentials
+  ensure_red_hat_access_token || return 1
 
   local bundle_url tmp_bundle file_type sudo_user_home candidate controller_user controller_home retry_creds
   local remote_vars_file remote_bundle_dir local_bundle_source
@@ -1335,6 +1397,7 @@ download_bundle() {
       --arg LOCAL_BUNDLE_PATH "${local_bundle_source}" \
       --arg RHSM_USERNAME "${RHSM_USERNAME:-}" \
       --arg RHSM_PASSWORD "${RHSM_PASSWORD:-}" \
+      --arg RED_HAT_ACCESS_TOKEN "${RED_HAT_ACCESS_TOKEN:-}" \
       '{
         ADMIN_USER: $ADMIN_USER,
         ADMIN_HOME: $ADMIN_HOME,
@@ -1342,7 +1405,8 @@ download_bundle() {
         BUNDLE_FILE: $BUNDLE_FILE,
         LOCAL_BUNDLE_PATH: $LOCAL_BUNDLE_PATH,
         RHSM_USERNAME: $RHSM_USERNAME,
-        RHSM_PASSWORD: $RHSM_PASSWORD
+        RHSM_PASSWORD: $RHSM_PASSWORD,
+        RED_HAT_ACCESS_TOKEN: $RED_HAT_ACCESS_TOKEN
       }' > "${remote_vars_file}"
 
     if ! run_project_playbook \
@@ -1419,12 +1483,12 @@ download_bundle() {
   )
 
   # Prefer authenticated fetch to avoid CDN login redirects being saved as HTML.
-  if [[ -n "${RHSM_USERNAME:-}" && -n "${RHSM_PASSWORD:-}" ]]; then
+  if [[ -z "${RED_HAT_ACCESS_TOKEN:-}" && -n "${RHSM_USERNAME:-}" && -n "${RHSM_PASSWORD:-}" ]]; then
     curl_args+=(--user "${RHSM_USERNAME}:${RHSM_PASSWORD}")
   fi
 
-  if [[ -n "${RH_OFFLINE_TOKEN:-}" ]]; then
-    curl_args+=(-H "Authorization: Bearer ${RH_OFFLINE_TOKEN}")
+  if [[ -n "${RED_HAT_ACCESS_TOKEN:-}" ]]; then
+    curl_args+=(-H "Authorization: Bearer ${RED_HAT_ACCESS_TOKEN}")
   fi
 
   if ! curl "${curl_args[@]}"; then
@@ -1965,6 +2029,7 @@ run_execution_playbook() {
       --arg AUTOMATIONMETRICS_ADMIN_PASSWORD "${AUTOMATIONMETRICS_ADMIN_PASSWORD:-}" \
       --arg AUTOMATIONMETRICS_PG_PASSWORD "${AUTOMATIONMETRICS_PG_PASSWORD:-}" \
       --arg AUTOMATIONMETRICS_CONTROLLER_READ_PG_PASSWORD "${AUTOMATIONMETRICS_CONTROLLER_READ_PG_PASSWORD:-}" \
+      --arg AUTOMATIONMETRICS_HUB_READ_PG_PASSWORD "${AUTOMATIONMETRICS_HUB_READ_PG_PASSWORD:-}" \
       '{
         BUNDLE_DIR: $BUNDLE_DIR,
         AAP_CONTROLLER_IP: $AAP_CONTROLLER_IP,
@@ -1987,7 +2052,8 @@ run_execution_playbook() {
         GATEWAY_PG_PASSWORD: $GATEWAY_PG_PASSWORD,
         AUTOMATIONMETRICS_ADMIN_PASSWORD: $AUTOMATIONMETRICS_ADMIN_PASSWORD,
         AUTOMATIONMETRICS_PG_PASSWORD: $AUTOMATIONMETRICS_PG_PASSWORD,
-        AUTOMATIONMETRICS_CONTROLLER_READ_PG_PASSWORD: $AUTOMATIONMETRICS_CONTROLLER_READ_PG_PASSWORD
+        AUTOMATIONMETRICS_CONTROLLER_READ_PG_PASSWORD: $AUTOMATIONMETRICS_CONTROLLER_READ_PG_PASSWORD,
+        AUTOMATIONMETRICS_HUB_READ_PG_PASSWORD: $AUTOMATIONMETRICS_HUB_READ_PG_PASSWORD
       }' > "${remote_workflow_vars}"
 
     if ! run_project_playbook \
@@ -2067,6 +2133,7 @@ run_execution_playbook() {
     --arg automationmetrics_admin_password "${AUTOMATIONMETRICS_ADMIN_PASSWORD:-}" \
     --arg automationmetrics_pg_password "${AUTOMATIONMETRICS_PG_PASSWORD:-}" \
     --arg automationmetrics_controller_read_pg_password "${AUTOMATIONMETRICS_CONTROLLER_READ_PG_PASSWORD:-}" \
+    --arg automationmetrics_hub_read_pg_password "${AUTOMATIONMETRICS_HUB_READ_PG_PASSWORD:-}" \
     '{
       ansible_user: $ansible_user,
       ansible_user_uid: $ansible_user_uid,
@@ -2085,7 +2152,8 @@ run_execution_playbook() {
       gateway_pg_password: $gateway_pg_password,
       automationmetrics_admin_password: $automationmetrics_admin_password,
       automationmetrics_pg_password: $automationmetrics_pg_password,
-      automationmetrics_controller_read_pg_password: $automationmetrics_controller_read_pg_password
+      automationmetrics_controller_read_pg_password: $automationmetrics_controller_read_pg_password,
+      automationmetrics_hub_read_pg_password: $automationmetrics_hub_read_pg_password
     }' > "${runtime_extra_vars}"
   chmod 600 "${runtime_extra_vars}"
   if id "${controller_user}" >/dev/null 2>&1; then
@@ -2363,6 +2431,23 @@ reconfigure_secret_value() {
   fi
 }
 
+reconfigure_optional_secret_value() {
+  local var_name="${1:-}"
+  local prompt="${2:-}"
+  local value
+  local -n target_ref="${var_name}"
+
+  if ! read -r -s -p "${prompt} [ENTER keeps current/disabled]: " value; then
+    echo
+    err "Unable to read optional secret for ${var_name}."
+    return 1
+  fi
+  echo
+  if [[ -n "${value}" ]]; then
+    target_ref="${value}"
+  fi
+}
+
 persist_red_hat_credentials() {
   save_env_kv "RHSM_USERNAME" "${RHSM_USERNAME}"
   save_env_kv "RHSM_PASSWORD" "${RHSM_PASSWORD}"
@@ -2396,6 +2481,8 @@ reconfigure_environment() {
     "${DEFAULT_RHSM_USERNAME}" || return 1
   reconfigure_secret_value RHSM_PASSWORD \
     "Enter RHSM_PASSWORD (Red Hat Login/CDN/registry/console password)" || return 1
+  reconfigure_optional_secret_value RHSM_ACTIVATION_KEY \
+    "Enter optional RHSM_ACTIVATION_KEY" || return 1
   reconfigure_secret_value RH_OFFLINE_TOKEN \
     "Enter RH_OFFLINE_TOKEN (from access.redhat.com)" || return 1
   reconfigure_secret_value RH_AH_TOKEN \
@@ -2404,6 +2491,9 @@ reconfigure_environment() {
 
   save_env_kv "ADMIN_PASSWORD" "${ADMIN_PASSWORD}"
   persist_red_hat_credentials
+  if [[ -n "${RHSM_ACTIVATION_KEY:-}" ]]; then
+    save_env_kv "RHSM_ACTIVATION_KEY" "${RHSM_ACTIVATION_KEY}"
+  fi
   save_env_kv "RH_OFFLINE_TOKEN" "${RH_OFFLINE_TOKEN}"
   save_env_kv "RH_AH_TOKEN" "${RH_AH_TOKEN}"
   save_env_kv "BUNDLE_URL" "${BUNDLE_URL}"

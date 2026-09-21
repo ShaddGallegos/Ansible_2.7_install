@@ -125,53 +125,6 @@ prompt_target_info() {
 }
 
 
-bootstrap_remote_admin() {
-    load_env 2>/dev/null || true
-    local scope
-    scope="$(get_install_scope)"
-    if [[ "$scope" == "local" ]]; then
-        log "Local installation selected ($scope). Skipping remote SSH bootstrap."
-        return 0
-    fi
-
-    local target_host="${AAP_REMOTE_IP:-${AAP_CONTROLLER_IP:-}}"
-    [[ -z "$target_host" ]] && target_host="$(get_install_target_host)"
-    local target_fqdn
-    target_fqdn="$(get_install_target_fqdn)"
-
-    if [[ -z "$target_host" || "$target_host" == "127.0.0.1" ]]; then
-        echo "[ERR] Cannot bootstrap SSH: Target host IP/hostname is empty!" >&2
-        return 1
-    fi
-
-    local root_p="${ROOT_PASSWORD:-}"
-    if [[ -z "$root_p" ]]; then
-        read -r -s -p "Enter root password for remote target host (${target_fqdn:-$target_host} / ${target_host}): " root_p
-        echo ""
-        if [[ -n "$root_p" ]]; then
-            export ROOT_PASSWORD="$root_p"
-            save_env_kv "ROOT_PASSWORD" "$root_p"
-        fi
-    fi
-
-    log "Bootstrapping target host ${target_host} via root@${target_host}..."
-
-    local ssh_cmd=(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10)
-    if [[ -n "${root_p:-}" ]] && command -v sshpass &>/dev/null; then
-        ssh_cmd=(sshpass -p "$root_p" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10)
-    fi
-
-    "${ssh_cmd[@]}" "root@${target_host}" bash -s <<REMOTE_BOOTSTRAP
-set -euo pipefail
-if ! id "admin" &>/dev/null; then
-    useradd -m -s /bin/bash admin
-fi
-echo "admin ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/admin
-chmod 0440 /etc/sudoers.d/admin
-REMOTE_BOOTSTRAP
-    ok "Target host ${target_host} bootstrapped successfully."
-}
-
 # shellcheck shell=bash
 # Install-target resolution. This file is sourced by aap27_installer.sh.
 

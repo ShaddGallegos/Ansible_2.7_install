@@ -13,6 +13,7 @@
     effective_local_bundle_path: "{{ LOCAL_BUNDLE_PATH | default('') }}"
     effective_rhsm_username: "{{ RHSM_USERNAME | default('') }}"
     effective_rhsm_password: "{{ RHSM_PASSWORD | default('') }}"
+    effective_red_hat_access_token: "{{ RED_HAT_ACCESS_TOKEN | default('') }}"
     remove_bundle_archive_after_extract: "{{ AAP_CLEANUP_BUNDLE_ARCHIVE | default(true) }}"
 
   tasks:
@@ -142,10 +143,22 @@
         mode: "0644"
         owner: "{{ platform_admin_user }}"
         group: "{{ platform_admin_user }}"
-        url_username: "{{ effective_rhsm_username if effective_rhsm_username | length > 0 else omit }}"
-        url_password: "{{ effective_rhsm_password if effective_rhsm_password | length > 0 else omit }}"
-        force_basic_auth: "{{ (effective_rhsm_username | length > 0) and (effective_rhsm_password | length > 0) }}"
-      no_log: false
+        url_username: >-
+          {{ effective_rhsm_username
+             if (effective_red_hat_access_token | length == 0) and
+                (effective_rhsm_username | length > 0) else omit }}
+        url_password: >-
+          {{ effective_rhsm_password
+             if (effective_red_hat_access_token | length == 0) and
+                (effective_rhsm_password | length > 0) else omit }}
+        force_basic_auth: >-
+          {{ (effective_red_hat_access_token | length == 0) and
+             (effective_rhsm_username | length > 0) and
+             (effective_rhsm_password | length > 0) }}
+        headers: >-
+          {{ {'Authorization': 'Bearer ' ~ effective_red_hat_access_token}
+             if effective_red_hat_access_token | length > 0 else omit }}
+      no_log: true
       when:
         - not bundle_already_ready | bool
         - effective_local_bundle_path | length == 0
@@ -175,15 +188,21 @@
           url="{{ effective_bundle_url }}";
           user="{{ effective_rhsm_username if effective_rhsm_username | length > 0 else '' }}";
           pass="{{ effective_rhsm_password if effective_rhsm_password | length > 0 else '' }}";
+          token="$RED_HAT_ACCESS_TOKEN";
           if head -c 512 "$f" | tr -d '\\0' | awk 'BEGIN{IGNORECASE=1} /<html|<head|<title|nginx|404 Not Found/{exit 0} {exit 1}'; then
             # try curl with auth if provided, otherwise simple curl
-            if [[ -n "$user" ]]; then
+            if [[ -n "$token" ]]; then
+              curl -fSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 300 -H "Authorization: Bearer $token" -o "$f" "$url"
+            elif [[ -n "$user" ]]; then
               curl -fSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 300 --user "$user:$pass" -o "$f" "$url"
             else
               curl -fSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 300 -o "$f" "$url"
             fi
           fi
       register: curl_retry
+      environment:
+        RED_HAT_ACCESS_TOKEN: "{{ effective_red_hat_access_token }}"
+      no_log: true
       changed_when: curl_retry.rc == 0 and (curl_retry.stdout | default('') | length > 0)
       failed_when: false
       when: not bundle_already_ready | bool
@@ -250,7 +269,7 @@
       ansible.builtin.tempfile:
         state: directory
         prefix: "bundle_extract."
-        dir: "{{ admin_download_dir }}"
+        path: "{{ admin_download_dir }}"
       register: tmp_extract_dir_raw
       changed_when: true
       when: not bundle_already_ready | bool

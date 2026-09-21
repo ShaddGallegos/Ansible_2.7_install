@@ -10,6 +10,31 @@
       changed_when: false
       failed_when: false
 
+    - name: Register with Red Hat Connector
+      ansible.builtin.command:
+        argv:
+          - rhc
+          - connect
+          - --username
+          - "{{ RHSM_USERNAME }}"
+          - --password
+          - "{{ RHSM_PASSWORD }}"
+      register: rhc_registration
+      changed_when: rhc_registration.rc == 0
+      failed_when: false
+      no_log: true
+      when:
+        - rhsm_identity.rc != 0
+        - RHSM_USERNAME | default('') | length > 0
+        - RHSM_PASSWORD | default('') | length > 0
+
+    - name: Check RHSM registration after Red Hat Connector
+      ansible.builtin.command: subscription-manager identity
+      register: rhsm_identity_after_rhc
+      changed_when: false
+      failed_when: false
+      when: rhsm_identity.rc != 0
+
     - name: Register with RHSM activation key
       ansible.builtin.command:
         argv:
@@ -25,7 +50,18 @@
       no_log: true
       when:
         - rhsm_identity.rc != 0
+        - rhsm_identity_after_rhc.rc != 0
         - RHSM_ACTIVATION_KEY | default('') | length > 0
+        - RHSM_ORG_ID | default('') | length > 0
+
+    - name: Check RHSM registration after activation key
+      ansible.builtin.command: subscription-manager identity
+      register: rhsm_identity_after_activation
+      changed_when: false
+      failed_when: false
+      when:
+        - rhsm_identity.rc != 0
+        - rhsm_identity_after_rhc.rc != 0
 
     - name: Register with RHSM username and password
       ansible.builtin.command:
@@ -36,28 +72,22 @@
           - "{{ RHSM_USERNAME }}"
           - --password
           - "{{ RHSM_PASSWORD }}"
-          - --org
-          - "{{ RHSM_ORG_ID }}"
       register: rhsm_password_registration
       changed_when: rhsm_password_registration.rc == 0
       failed_when: false
       no_log: true
       when:
         - rhsm_identity.rc != 0
-        - RHSM_ACTIVATION_KEY | default('') | length == 0
+        - rhsm_identity_after_rhc.rc != 0
+        - rhsm_identity_after_activation.rc != 0
+        - RHSM_USERNAME | default('') | length > 0
+        - RHSM_PASSWORD | default('') | length > 0
 
-    - name: Report rejected RHSM activation key
+    - name: Report rejected RHSM registration credentials
       ansible.builtin.fail:
         msg: AAP27_RHSM_CREDENTIALS_REJECTED
       when:
         - rhsm_identity.rc != 0
-        - RHSM_ACTIVATION_KEY | default('') | length > 0
-        - rhsm_activation_registration.rc != 0
-
-    - name: Report rejected RHSM username or password
-      ansible.builtin.fail:
-        msg: AAP27_RHSM_CREDENTIALS_REJECTED
-      when:
-        - rhsm_identity.rc != 0
-        - RHSM_ACTIVATION_KEY | default('') | length == 0
+        - rhsm_identity_after_rhc.rc != 0
+        - rhsm_identity_after_activation.rc != 0
         - rhsm_password_registration.rc != 0

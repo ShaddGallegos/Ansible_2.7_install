@@ -22,6 +22,7 @@ AAP27_STATE_KEYS=(
     EDA_PG_PASSWORD AUTOMATIONMETRICS_ADMIN_PASSWORD
     AUTOMATIONMETRICS_PG_PASSWORD
     AUTOMATIONMETRICS_CONTROLLER_READ_PG_PASSWORD
+    AUTOMATIONMETRICS_HUB_READ_PG_PASSWORD
     INVENTORY_GROWTH_USERNAME INVENTORY_GROWTH_PASSWORD
     CONTROLLER_PG_HOST CONTROLLER_PG_USER GATEWAY_PG_HOST GATEWAY_PG_USER
     HUB_PG_HOST HUB_PG_USER EDA_PG_HOST EDA_PG_USER
@@ -122,10 +123,11 @@ ensure_rhsm_credentials_exist() {
     }
 
     # 1. Retrieve stored values
-    local saved_user saved_pass saved_org_id saved_offline saved_ah saved_admin saved_ip saved_fqdn saved_shortname saved_domain saved_root saved_ig_u saved_ig_p saved_scope
+    local saved_user saved_pass saved_org_id saved_activation_key saved_offline saved_ah saved_admin saved_ip saved_fqdn saved_shortname saved_domain saved_root saved_ig_u saved_ig_p saved_scope
     saved_user="${RHSM_USERNAME:-$(get_v_key "RHSM_USERNAME")}"
     saved_pass="${RHSM_PASSWORD:-$(get_v_key "RHSM_PASSWORD")}"
     saved_org_id="${RHSM_ORG_ID:-$(get_v_key "RHSM_ORG_ID")}"
+    saved_activation_key="${RHSM_ACTIVATION_KEY:-$(get_v_key "RHSM_ACTIVATION_KEY")}"
     saved_offline="${RH_OFFLINE_TOKEN:-$(get_v_key "RH_OFFLINE_TOKEN")}"
     saved_ah="${RH_AH_TOKEN:-$(get_v_key "RH_AH_TOKEN")}"
     saved_admin="${ADMIN_PASSWORD:-$(get_v_key "ADMIN_PASSWORD")}"
@@ -165,6 +167,11 @@ ensure_rhsm_credentials_exist() {
         ask_value saved_org_id "Enter RHSM_ORG_ID (passed to subscription-manager as --org)" "" true || return 1
     fi
 
+    if [[ -z "$saved_activation_key" && "${NONINTERACTIVE:-false}" != "true" && -t 0 ]]; then
+        read -r -s -p "Enter optional RHSM_ACTIVATION_KEY [ENTER to skip]: " saved_activation_key
+        echo
+    fi
+
     # Prompt for every missing required secret, including in non-interactive mode.
     local current_pass="$saved_pass"
     local current_offline="$saved_offline"
@@ -178,10 +185,6 @@ ensure_rhsm_credentials_exist() {
 
     if [[ "$user_changed" == "true" || -z "$current_pass" ]]; then
         read_secret_prompt current_pass "Enter RHSM_PASSWORD" true || return 1
-    fi
-
-    if [[ -z "$current_offline" ]]; then
-        read_secret_prompt current_offline "Enter RH_OFFLINE_TOKEN (Red Hat Offline API Token)" true || return 1
     fi
 
     if [[ -z "$current_ah" ]]; then
@@ -237,6 +240,7 @@ ensure_rhsm_credentials_exist() {
     # 4. Export & Persist Variables
     export RHSM_PASSWORD="$current_pass"
     export RHSM_ORG_ID="$saved_org_id"
+    export RHSM_ACTIVATION_KEY="$saved_activation_key"
     export RH_OFFLINE_TOKEN="$current_offline"
     export RH_AH_TOKEN="$current_ah"
     export ADMIN_PASSWORD="$current_admin"
@@ -260,6 +264,7 @@ ensure_rhsm_credentials_exist() {
 
     set_v_key "RHSM_PASSWORD" "$RHSM_PASSWORD" || return 1
     set_v_key "RHSM_ORG_ID" "$RHSM_ORG_ID" || return 1
+    set_v_key "RHSM_ACTIVATION_KEY" "$RHSM_ACTIVATION_KEY" || return 1
     set_v_key "RH_OFFLINE_TOKEN" "$RH_OFFLINE_TOKEN" || return 1
     set_v_key "RH_AH_TOKEN" "$RH_AH_TOKEN" || return 1
     set_v_key "ADMIN_PASSWORD" "$ADMIN_PASSWORD" || return 1
@@ -329,19 +334,23 @@ capture_credentials() {
 ensure_required_secret() {
     local variable_name="${1:-}"
     local prompt="${2:-Enter required secret}"
+    local default_value="${3:-}"
     local -n secret_ref="$variable_name"
 
     if [[ -n "${secret_ref:-}" ]]; then
         return 0
     fi
-    read_secret_prompt "$variable_name" "$prompt" true || return 1
+    if [[ -n "${default_value}" ]]; then
+        secret_ref="${default_value}"
+    else
+        read_secret_prompt "$variable_name" "$prompt" true || return 1
+    fi
     save_env_kv "$variable_name" "$secret_ref"
 }
 
 ensure_installer_secrets() {
     local specification variable_name prompt
     local -a required_secrets=(
-        "ADMIN_PASSWORD|Enter admin_password (platform admin and inventory password)"
         "CONTROLLER_ADMIN_PASSWORD|Enter controller_admin_password (AAP Controller admin password)"
         "CONTROLLER_PG_PASSWORD|Enter controller_pg_password (Controller database password)"
         "HUB_ADMIN_PASSWORD|Enter hub_admin_password (Automation Hub admin password)"
@@ -354,13 +363,16 @@ ensure_installer_secrets() {
         "AUTOMATIONMETRICS_ADMIN_PASSWORD|Enter automationmetrics_admin_password"
         "AUTOMATIONMETRICS_PG_PASSWORD|Enter automationmetrics_pg_password"
         "AUTOMATIONMETRICS_CONTROLLER_READ_PG_PASSWORD|Enter automationmetrics_controller_read_pg_password"
+        "AUTOMATIONMETRICS_HUB_READ_PG_PASSWORD|Enter automationmetrics_hub_read_pg_password"
     )
 
     load_env
+    ensure_required_secret "ADMIN_PASSWORD" \
+        "Enter admin_password (platform admin and inventory password)" "redhat" || return 1
     for specification in "${required_secrets[@]}"; do
         variable_name="${specification%%|*}"
         prompt="${specification#*|}"
-        ensure_required_secret "$variable_name" "$prompt" || return 1
+        ensure_required_secret "$variable_name" "$prompt" "${ADMIN_PASSWORD}" || return 1
     done
 }
 

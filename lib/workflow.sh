@@ -32,9 +32,6 @@ prepare_install_target() {
 
 run_complete_install_pipeline() {
     run_full_install_step 1 "load installation target" configure_install_scope false || return 1
-    if [[ "$(get_install_scope)" == "remote" ]]; then
-        bootstrap_remote_admin "$(get_install_target_host)" || return 1
-    fi
     run_full_install_step 2 "bootstrap admin, RHEL repositories, and prerequisite packages" setup_admin_user || return 1
     run_full_install_step 3 "prerequisite resource and package checks" run_preflight_resource_checks || return 1
     run_full_install_step 4 "prepare host and relax firewalld/SELinux for installation" prepare_install_target || return 1

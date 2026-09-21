@@ -29,6 +29,7 @@
     automationmetrics_admin_password: "{{ AUTOMATIONMETRICS_ADMIN_PASSWORD }}"
     automationmetrics_pg_password: "{{ AUTOMATIONMETRICS_PG_PASSWORD }}"
     automationmetrics_controller_read_pg_password: "{{ AUTOMATIONMETRICS_CONTROLLER_READ_PG_PASSWORD }}"
+    automationmetrics_hub_read_pg_password: "{{ AUTOMATIONMETRICS_HUB_READ_PG_PASSWORD }}"
     allowed_execution_playbooks:
       - install
       - backup
@@ -241,6 +242,8 @@
             'automationmetrics_controller_read_pg_host': (automationmetrics_controller_read_pg_host | default(controller_pg_host | default('localhost'))),
             'automationmetrics_controller_read_pg_user': (automationmetrics_controller_read_pg_user | default('postgres')),
             'automationmetrics_controller_read_pg_password': (automationmetrics_controller_read_pg_password | default(controller_pg_password | default(ADMIN_PASSWORD
+          | default('')))),
+            'automationmetrics_hub_read_pg_password': (automationmetrics_hub_read_pg_password | default(hub_pg_password | default(ADMIN_PASSWORD
           | default(''))))
           }) }}
       no_log: false
@@ -262,6 +265,7 @@
         - automationmetrics_admin_password
         - automationmetrics_pg_password
         - automationmetrics_controller_read_pg_password
+        - automationmetrics_hub_read_pg_password
       no_log: true
 
     - name: Debug forwarded postgresql_admin_password presence (redacted)
@@ -556,6 +560,22 @@
       failed_when: false
       changed_when: false
 
+    - name: Diagnostic stat venv Python path
+      ansible.builtin.stat:
+        path: "{{ installer_bundle_dir }}/.venv-aap27-runtime/bin/python"
+      register: venv_python_stat
+      failed_when: false
+      changed_when: false
+
+    - name: Select nested Ansible command
+      ansible.builtin.set_fact:
+        nested_ansible_command: >-
+          {{ [installer_bundle_dir ~ '/.venv-aap27-runtime/bin/ansible-playbook']
+             if venv_ansible_playbook_stat.stat.exists | default(false)
+             else ([installer_bundle_dir ~ '/.venv-aap27-runtime/bin/python', '-m', 'ansible.cli.playbook']
+             if venv_python_stat.stat.exists | default(false)
+             else ['ansible-playbook']) }}
+
     - name: Show venv bin list
       ansible.builtin.debug:
         var: venv_bin_list.stdout_lines
@@ -568,52 +588,47 @@
       ansible.builtin.debug:
         var: venv_ansible_playbook_stat
 
+    - name: Validate patched AAP containerized playbook syntax
+      become: true
+      become_user: "{{ installer_remote_user }}"
+      ansible.builtin.command:
+        argv: >-
+          {{ nested_ansible_command + [
+            '--syntax-check',
+            '-i', 'inventory-growth',
+            '-c', 'local',
+            '-e', 'ansible_user_uid=' ~ remote_user_uid,
+            '-e', '@forwarded_extra_vars.yml',
+            'ansible.containerized_installer.' ~ execution_playbook
+          ] }}
+      args:
+        chdir: "{{ installer_bundle_dir }}"
+      environment:
+        ANSIBLE_COLLECTIONS_PATHS: >-
+          {{ installer_bundle_dir }}/collections:{{ lookup('env', 'ANSIBLE_COLLECTIONS_PATHS') | default('') }}
+        ANSIBLE_LOG_PATH: /dev/null
+      changed_when: false
+
     - name: Run selected AAP containerized playbook
       become: true
       become_user: "{{ installer_remote_user }}"
       ansible.builtin.command:
-        argv:
-          - bash
-          - -lc
-          - |
-                set -euxo pipefail
-                ANSIBLE_COLLECTIONS_PATHS="{{ installer_bundle_dir }}/collections:{{ lookup('env', 'ANSIBLE_COLLECTIONS_PATHS') | default('') }}"
-                if [[ -x "{{ installer_bundle_dir }}/.venv-aap27-runtime/bin/ansible-playbook" ]]; then
-                  ANSIBLE_LOG_PATH="/tmp/aap_install.log" \
-                    ANSIBLE_STDOUT_CALLBACK=debug \
-                    "{{ installer_bundle_dir }}/.venv-aap27-runtime/bin/ansible-playbook" \
-                      -vvv \
-                      -i inventory-growth \
-                      -c local \
-                      -e "ansible_user_uid={{ remote_user_uid }}" \
-                      -e @forwarded_extra_vars.yml \
-                      ansible.containerized_installer.{{ execution_playbook }}
-                elif [[ -x "{{ installer_bundle_dir }}/.venv-aap27-runtime/bin/python" ]]; then
-                  ANSIBLE_LOG_PATH="/tmp/aap_install.log" \
-                    ANSIBLE_STDOUT_CALLBACK=debug \
-                    "{{ installer_bundle_dir }}/.venv-aap27-runtime/bin/python" \
-                      -m ansible.cli.playbook \
-                      -vvv \
-                      -i inventory-growth \
-                      -c local \
-                      -e "ansible_user_uid={{ remote_user_uid }}" \
-                      -e @forwarded_extra_vars.yml \
-                      ansible.containerized_installer.{{ execution_playbook }}
-                elif command -v ansible-playbook >/dev/null 2>&1; then
-                  ANSIBLE_LOG_PATH="/tmp/aap_install.log" \
-                    ANSIBLE_STDOUT_CALLBACK=debug \
-                    ansible-playbook \
-                      -vvv \
-                      -i inventory-growth \
-                      -c local \
-                      -e "ansible_user_uid={{ remote_user_uid }}" \
-                      -e @forwarded_extra_vars.yml \
-                      ansible.containerized_installer.{{ execution_playbook }}
-                else
-                  echo 'ansible-playbook not found in bundle venv, venv python fallback, or PATH' >&2; exit 127
-                fi
+        argv: >-
+          {{ nested_ansible_command + [
+            '-vvv',
+            '-i', 'inventory-growth',
+            '-c', 'local',
+            '-e', 'ansible_user_uid=' ~ remote_user_uid,
+            '-e', '@forwarded_extra_vars.yml',
+            'ansible.containerized_installer.' ~ execution_playbook
+          ] }}
       args:
         chdir: "{{ installer_bundle_dir }}"
+      environment:
+        ANSIBLE_COLLECTIONS_PATHS: >-
+          {{ installer_bundle_dir }}/collections:{{ lookup('env', 'ANSIBLE_COLLECTIONS_PATHS') | default('') }}
+        ANSIBLE_LOG_PATH: /tmp/aap_install.log
+        ANSIBLE_STDOUT_CALLBACK: debug
       register: install_result
       changed_when: true
 
