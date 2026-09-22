@@ -5,16 +5,12 @@
       {{ aap27_bundle_hotfixes_bundle_dir ~
          '/collections/ansible_collections/ansible/containerized_installer/roles/common/tasks/main.yml' }}
 
-- name: Ensure XDG_RUNTIME_DIR and HOME are exported alongside TMPDIR
+- name: Normalize rootless Podman environment exports
   ansible.builtin.replace:
     path: "{{ aap27_bundle_hotfixes_common_tasks }}"
-    regexp: '(export TMPDIR="\$\{podman_tmpdir\}"\n)(?!export XDG_RUNTIME_DIR=)'
+    regexp: '(?m)^([ \t]*)export TMPDIR="\$\{podman_tmpdir\}"\r?\n(?:[ \t]*export XDG_RUNTIME_DIR="/run/user/\{\{ ansible_user_uid \}\}"\r?\n[ \t]*export HOME="\{\{ ansible_user_dir \}\}"(?:[^\S\r\n]+|\r?\n))?[ \t]*(export CONTAINERS_STORAGE_CONF=.*)$'
     replace: |
+      \1export TMPDIR="${podman_tmpdir}"
       \1export XDG_RUNTIME_DIR="/run/user/{{ '{{' }} ansible_user_uid {{ '}}' }}"
-      export HOME="{{ '{{' }} ansible_user_dir {{ '}}' }}"
-
-- name: Repair previously concatenated rootless Podman exports
-  ansible.builtin.replace:
-    path: "{{ aap27_bundle_hotfixes_common_tasks }}"
-    regexp: '(export HOME="\{\{ ansible_user_dir \}\}")[[:space:]]+(export CONTAINERS_STORAGE_CONF=)'
-    replace: '\1\n\2'
+      \1export HOME="{{ '{{' }} ansible_user_dir {{ '}}' }}"
+      \1\2

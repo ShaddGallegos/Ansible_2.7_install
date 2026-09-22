@@ -26,6 +26,10 @@ Currently supported:
   0400 to 0444, matching the other controller secrets. Without this, the
   awx process (running as a non-root, non-keep-id container UID) cannot read
   `/etc/tower/SECRET_KEY`, causing the controller-web container to crash loop.
+- AAP 2.7-4: changes generated and copied Controller TLS private key modes from
+  0400 to 0444. The rootless Controller web container runs nginx under an
+  internal UID that otherwise cannot read the bind-mounted `/etc/tower/tower.key`,
+  leaving the Gateway Controller route at `503 no healthy upstream`.
 - AAP 2.7-4: ensures the installer's internal CA certificate is present in the
   extracted TLS trust bundle (`aap/tls/extracted/pem/tls-ca-bundle.pem`) on
   every run, working around the collection's CA-trust-update task failing to

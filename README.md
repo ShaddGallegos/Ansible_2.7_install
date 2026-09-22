@@ -1,6 +1,6 @@
-# AAP 2.7-2 Menu Installer Helper
+# AAP 2.7 Menu Installer Helper
 
-A concise helper repository and menu-driven installer for preparing and installing Red Hat Ansible Automation Platform (AAP) 2.7-2 (containerized) on a single node.
+A concise helper repository and menu-driven installer for preparing and installing Red Hat Ansible Automation Platform (AAP) 2.7 containerized deployments on a single node. The compatibility roles include version-gated fixes for the 2.7-4 bundle.
 
 ## Contents
 
@@ -152,6 +152,15 @@ The script is menuized and can be run in stages.
 
 Recommended launch user is `admin` (with passwordless sudo); the script now escalates only privileged operations internally.
 
+For a non-interactive run with maximum Ansible verbosity:
+
+```bash
+./aap27_installer.sh --non-interactive --ansible-verbosity 3
+```
+
+The verbosity value is numeric (`0` through `3`). `--debug` also enables Bash
+xtrace and Ansible `-vvv` output.
+
 ## Install Scope Contract
 
 `INSTALL_SCOPE=local` keeps preparation, bundle extraction, inventory mutation,
@@ -213,6 +222,23 @@ entry is never mutated by remote preparation.
   prompt to create it.
 - Review generated `inventory-growth` before installation.
 - This tool does not replace official Red Hat documentation.
+
+## Troubleshooting Controller 503 Responses
+
+During `automationgateway : Merge organization`, `503 no healthy upstream` for
+`/api/controller/v2/service-index/metadata/` means the Gateway proxy cannot
+reach a healthy Automation Controller web service. Check the routed health
+endpoint first:
+
+```bash
+curl -k https://<AAP_FQDN>/api/controller/v2/ping/
+```
+
+For AAP 2.7-4, this repository patches the generated and copied Controller TLS
+key modes so nginx inside the rootless Controller container can read the
+bind-mounted key. Re-running the installer reapplies the version-gated hotfix
+before the nested installer starts. Use verbosity level `3` to capture the
+Controller container error when the routed endpoint still returns `503`.
 
 ## Development and Runtime Environments
 

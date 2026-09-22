@@ -1,6 +1,6 @@
 # Quickstart
 
-Fastest path to running the AAP 2.7-2 menu installer.
+Fastest path to running the AAP 2.7 menu installer, including validated 2.7-4 compatibility fixes.
 
 ## What it does
 
@@ -36,6 +36,15 @@ target IP, short hostname, and domain:
 ```bash
 ./aap27_installer.sh --non-interactive
 ```
+
+Maximum Ansible verbosity for troubleshooting:
+
+```bash
+./aap27_installer.sh --non-interactive --ansible-verbosity 3
+```
+
+Use a numeric value from `0` through `3`; forms such as
+`--ansible-verbosity=-vvv` are not accepted.
 
 Run the regression tests:
 
@@ -140,3 +149,13 @@ scp ~/Downloads/ansible-automation-platform-containerized-setup-bundle-2.7-*.x86
 ```
 
 Then re-run the installer; it will detect the persisted bundle on the target and proceed with extraction.
+
+If installation stops at `automationgateway : Merge organization` with a
+Controller `503 no healthy upstream`, verify Controller routing before retrying:
+
+```bash
+curl -k https://<AAP_FQDN>/api/controller/v2/ping/
+```
+
+The 2.7-4 compatibility role repairs the Controller TLS key mode required by
+the rootless nginx container, and rerunning the installer reapplies that fix.

@@ -698,10 +698,50 @@ test_2_7_4_rootless_env_hotfix_preserves_yaml() {
     "replace: |" "${hotfix_block}"
   assert_eq "rootless env hotfix does not strip replacement trailing newline" "false" \
     "$([[ "${hotfix_block}" == *"replace: |-"* ]] && echo true || echo false)"
-  assert_contains "rootless env hotfix repairs concatenated HOME export" \
-    "Repair previously concatenated rootless Podman exports" "${hotfix_block}"
-  assert_contains "rootless env repair inserts a newline between exports" \
-    "replace: '\\1\\n\\2'" "${hotfix_block}"
+  assert_contains "rootless env hotfix normalizes the complete export sequence" \
+    "Normalize rootless Podman environment exports" "${hotfix_block}"
+  assert_contains "rootless env hotfix captures existing YAML indentation" \
+    "^([ \\t]*)export TMPDIR" "${hotfix_block}"
+  assert_contains "rootless env hotfix restores TMPDIR indentation" \
+    '\1export TMPDIR=' "${hotfix_block}"
+  assert_contains "rootless env hotfix restores XDG_RUNTIME_DIR indentation" \
+    '\1export XDG_RUNTIME_DIR=' "${hotfix_block}"
+  assert_contains "rootless env hotfix restores HOME indentation" \
+    '\1export HOME=' "${hotfix_block}"
+  assert_contains "rootless env hotfix restores storage export indentation" \
+    '\1\2' "${hotfix_block}"
+}
+
+test_2_7_4_controller_tls_key_hotfix_is_scoped() {
+  local hotfix_main hotfix_block
+  hotfix_main="${SCRIPT_DIR}/roles/aap27_bundle_hotfixes/tasks/main.yml"
+  hotfix_block="$(sed -n \
+    '/name: Apply AAP 2.7-4 automationcontroller TLS key permission hotfix/,/name: Apply AAP 2.7-4 internal CA trust-bundle hotfix/p' \
+    "${hotfix_main}")"
+
+  assert_contains "controller TLS hotfix targets the controller TLS tasks" \
+    "/roles/automationcontroller/tasks/tls.yml" "${hotfix_block}"
+  assert_contains "controller TLS hotfix matches only tower.key" \
+    "controller_conf_dir" "${hotfix_block}"
+  assert_contains "controller TLS hotfix changes private key mode for container access" \
+    "replace: \"\\\\g<1>'0444'\"" "${hotfix_block}"
+}
+
+test_2_7_4_gateway_api_hotfix_retries_transient_timeouts() {
+  local hotfix_tasks hotfix_block
+  hotfix_tasks="${SCRIPT_DIR}/roles/aap27_bundle_hotfixes/tasks/main.yml"
+  hotfix_block="$(sed -n \
+    '/name: Apply AAP 2.7-4 gateway API convergence hotfix/,/name: Apply AAP 2.7-4 automationeda systemd service-list hotfix/p' \
+    "${hotfix_tasks}")"
+
+  assert_contains "gateway API hotfix increases request timeout" \
+    "gateway_request_timeout: 60" "${hotfix_block}"
+  assert_contains "gateway API hotfix retries service-cluster registration" \
+    "retries: 5" "${hotfix_block}"
+  assert_contains "gateway API hotfix bounds retry delay" \
+    "delay: 10" "${hotfix_block}"
+  assert_contains "gateway API hotfix still fails persistent errors" \
+    "until: gateway_service_cluster_result is succeeded" "${hotfix_block}"
 }
 
 test_nested_installer_validates_patched_yaml_first() {
@@ -715,10 +755,32 @@ test_nested_installer_validates_patched_yaml_first() {
 
   assert_status "nested installer includes patched YAML syntax validation" 0 \
     grep -qF "'--syntax-check'" "${install_playbook}"
+  assert_status "explicit bundle path does not require bundle directory name" 0 \
+    grep -qF "BUNDLE_DIR_NAME | default('ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64')" \
+      "${install_playbook}"
   assert_contains "nested syntax validation disables bundle-local logging" \
     "ANSIBLE_LOG_PATH: /dev/null" "${validation_block}"
+  assert_status "nested execution suppresses buffered duplicate output" 0 \
+    grep -A30 -F 'name: Run selected AAP containerized playbook' "${install_playbook}" | grep -q 'no_log: true'
+  assert_status "nested execution does not retain its complete stdout" 1 \
+    grep -A30 -F 'name: Run selected AAP containerized playbook' "${install_playbook}" | grep -q 'register: install_result'
   assert_eq "nested installer validates before execution" "true" \
     "$([[ -n "${validation_line}" && -n "${execution_line}" && ${validation_line} -lt ${execution_line} ]] && echo true || echo false)"
+}
+
+test_remote_installer_streams_nested_playbook_log() {
+  local execution_body follower_line playbook_line cleanup_line
+  execution_body="$(declare -f run_execution_playbook)"
+  follower_line="$(grep -nF "exec tail -n +1 -F /tmp/aap_install.log" <<< "${execution_body}" | cut -d: -f1)"
+  playbook_line="$(grep -nF 'aap_workflow_project/playbooks/install_aap.yml' <<< "${execution_body}" | cut -d: -f1)"
+  cleanup_line="$(grep -nF 'kill "${remote_log_pid}"' <<< "${execution_body}" | cut -d: -f1)"
+
+  assert_contains "remote installer follows the nested AAP log" \
+    "tail -n +1 -F /tmp/aap_install.log" "${execution_body}"
+  assert_contains "remote installer preserves the outer playbook status" \
+    '|| playbook_rc=$?' "${execution_body}"
+  assert_eq "remote log follower wraps nested playbook execution" "1" \
+    "$(( follower_line < playbook_line && playbook_line < cleanup_line ))"
 }
 
 test_remote_scope_routes_target_operations() {
@@ -1043,10 +1105,19 @@ test_env_schema_defines_supported_variables() {
 }
 
 test_installer_does_not_force_global_become() {
+  local inventory_role cleanup_line managed_line
+  inventory_role="${SCRIPT_DIR}/roles/aap27_inventory_growth/tasks/main.yml"
+  cleanup_line="$(grep -nF -- '- name: Remove existing connection identity overrides' "${inventory_role}" | cut -d: -f1)"
+  managed_line="$(grep -nF -- '- name: Set managed installer variables' "${inventory_role}" | cut -d: -f1)"
+
   assert_status "workflow does not force global become" 1 \
     grep -q "'ansible_become': true" "${SCRIPT_DIR}/aap_workflow_project/playbooks/install_aap.yml"
   assert_status "inventory role does not force global become" 1 \
-    grep -q "ansible_become='true'" "${SCRIPT_DIR}/roles/aap27_inventory_growth/tasks/main.yml"
+    grep -q "ansible_become='true'" "${inventory_role}"
+  assert_eq "inventory role removes connection overrides before managed values" "true" \
+    "$([[ -n "${cleanup_line}" && -n "${managed_line}" && ${cleanup_line} -lt ${managed_line} ]] && echo true || echo false)"
+  assert_status "inventory role removes stale user and connection variables" 0 \
+    grep -qE 'ansible_user|ansible_user_dir|ansible_become_method|ansible_become|ansible_connection' "${inventory_role}"
   assert_status "role execution does not force global become" 1 \
     grep -qE "ansible_become(: true|='true')" "${SCRIPT_DIR}/roles/aap27_menu_installer/tasks/step_install.yml"
   assert_status "shell repairs stale global become" 0 \
@@ -1237,7 +1308,10 @@ test_configurable_admin_identity
 test_rootless_playbook_wrapper_hides_secrets
 test_2_7_4_tls_hotfix_is_idempotent
 test_2_7_4_rootless_env_hotfix_preserves_yaml
+test_2_7_4_controller_tls_key_hotfix_is_scoped
+test_2_7_4_gateway_api_hotfix_retries_transient_timeouts
 test_nested_installer_validates_patched_yaml_first
+test_remote_installer_streams_nested_playbook_log
 test_remote_scope_routes_target_operations
 test_complete_install_pipeline_order
 test_remote_install_prework_relaxes_security

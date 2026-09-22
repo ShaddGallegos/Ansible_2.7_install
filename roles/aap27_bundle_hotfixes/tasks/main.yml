@@ -123,6 +123,35 @@
         regexp: "(- name: Ensure automation gateway proxy is ready\\n  ansible\\.builtin\\.uri:\\n    url: '\\{\\{ _gateway_proxy_url \\}\\}'\\n    validate_certs: )true"
         replace: '\1false'
 
+- name: Apply AAP 2.7-4 gateway API convergence hotfix
+  when: (aap27_bundle_hotfixes_bundle_dir | basename) is search('2\\.7-4(?:-|$)')
+  block:
+    - name: Set gateway post-install task path
+      ansible.builtin.set_fact:
+        aap27_bundle_hotfixes_gateway_postinstall_tasks: >-
+          {{ aap27_bundle_hotfixes_bundle_dir ~
+             '/collections/ansible_collections/ansible/containerized_installer/roles/automationgateway/tasks/postinstall.yml' }}
+
+    - name: Increase gateway API request timeout during post-install
+      ansible.builtin.replace:
+        path: "{{ aap27_bundle_hotfixes_gateway_postinstall_tasks }}"
+        regexp: >-
+          (      gateway_validate_certs:.*\n)(?:      gateway_request_timeout: 60[^\n]*\n?)?  block:\n
+        replace: |
+          \1      gateway_request_timeout: 60
+            block:
+
+    - name: Retry transient gateway service-cluster registration failures
+      ansible.builtin.replace:
+        path: "{{ aap27_bundle_hotfixes_gateway_postinstall_tasks }}"
+        regexp: >-
+          (    - name: Update automation platform gateway service clusters\n(?:.|\n)*?      loop: "\{\{ gateway_proxy_vars\.gateway_service_clusters \}\}"\n)(?!      register: gateway_service_cluster_result\n)
+        replace: |-
+          \1      register: gateway_service_cluster_result
+                retries: 5
+                delay: 10
+                until: gateway_service_cluster_result is succeeded
+
 - name: Apply AAP 2.7-4 automationeda systemd service-list hotfix
   when: (aap27_bundle_hotfixes_bundle_dir | basename) is search('2\\.7-4(?:-|$)')
   block:
@@ -164,6 +193,21 @@
         path: "{{ aap27_bundle_hotfixes_controller_facts_tasks }}"
         regexp: '(controller_secret_key,target=/etc/tower/SECRET_KEY,mode=)0400(,uid=)'
         replace: '\g<1>0444\g<2>'
+
+- name: Apply AAP 2.7-4 automationcontroller TLS key permission hotfix
+  when: (aap27_bundle_hotfixes_bundle_dir | basename) is search('2\\.7-4(?:-|$)')
+  block:
+    - name: Set controller TLS task path
+      ansible.builtin.set_fact:
+        aap27_bundle_hotfixes_controller_tls_tasks: >-
+          {{ aap27_bundle_hotfixes_bundle_dir ~
+             '/collections/ansible_collections/ansible/containerized_installer/roles/automationcontroller/tasks/tls.yml' }}
+
+    - name: Allow the controller web container to read its TLS key
+      ansible.builtin.replace:
+        path: "{{ aap27_bundle_hotfixes_controller_tls_tasks }}"
+        regexp: "((?:path|dest): '\\{\\{ controller_conf_dir \\}\\}/tower\\.key'\\n        mode: )'0400'"
+        replace: "\\g<1>'0444'"
 
 - name: Apply AAP 2.7-4 internal CA trust-bundle hotfix
   when: (aap27_bundle_hotfixes_bundle_dir | basename) is search('2\\.7-4(?:-|$)')

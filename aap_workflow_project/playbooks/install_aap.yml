@@ -12,7 +12,8 @@
     platform_admin_home: "{{ ADMIN_HOME | default('/home/' ~ platform_admin_user) }}"
     postgresql_admin_password: "{{ POSTGRESQL_ADMIN_PASSWORD }}"
     installer_bundle_dir: >-
-      {{ BUNDLE_DIR | default(platform_admin_home ~ '/Downloads/' ~ BUNDLE_DIR_NAME) }}
+      {{ BUNDLE_DIR | default(platform_admin_home ~ '/Downloads/' ~
+         (BUNDLE_DIR_NAME | default('ansible-automation-platform-containerized-setup-bundle-2.7-2-x86_64'))) }}
     installer_inventory_file: "{{ installer_bundle_dir }}/inventory-growth"
     AAP_CONTROLLER_FQDN: "{{ AAP_SHORTNAME | default('aap') }}.{{ AAP_DOMAIN_NAME | default('prod.spg') }}"
     target_address: "{{ AAP_CONTROLLER_IP | default(ansible_host | default(AAP_CONTROLLER_FQDN)) }}"
@@ -629,7 +630,7 @@
           {{ installer_bundle_dir }}/collections:{{ lookup('env', 'ANSIBLE_COLLECTIONS_PATHS') | default('') }}
         ANSIBLE_LOG_PATH: /tmp/aap_install.log
         ANSIBLE_STDOUT_CALLBACK: debug
-      register: install_result
+      no_log: true
       changed_when: true
 
     - name: Unmount admin-owned tempdir from /var/tmp/podman-admin

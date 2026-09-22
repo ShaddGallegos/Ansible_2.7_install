@@ -186,6 +186,11 @@
       {{
         vars.get('_init_container_image')
         or vars.get('init_container_image')
+        or vars.get('_ee_minimal_image')
+        or vars.get('_gateway_image')
+        or vars.get('_controller_image')
+        or vars.get('_hub_image')
+        or vars.get('_eda_image')
         or ''
       }}
 
@@ -206,4 +211,14 @@
   ansible.builtin.command:
     cmd: update-ca-trust extract
   become: true
+  changed_when: false
+
+- name: Verify generated CA bundle trusts the AAP CA
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - verify
+      - -CAfile
+      - "{{ _ca_tls_dir }}/extracted/pem/tls-ca-bundle.pem"
+      - "{{ _ca_tls_dir }}/ca.cert"
   changed_when: false

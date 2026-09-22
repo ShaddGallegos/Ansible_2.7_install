@@ -265,6 +265,29 @@
         fail_msg: "Downloaded bundle SHA256 does not match BUNDLE_SHA256"
       when: (BUNDLE_SHA256 is defined) and not bundle_already_ready | bool
 
+    - name: Validate bundle gzip integrity before extraction
+      ansible.builtin.command:
+        argv:
+          - gzip
+          - --test
+          - "{{ admin_download_dir }}/{{ effective_bundle_file }}"
+      register: bundle_gzip_test
+      changed_when: false
+      failed_when: false
+      when: not bundle_already_ready | bool
+
+    - name: Reject invalid bundle archive before extraction
+      ansible.builtin.fail:
+        msg: >-
+          {{ admin_download_dir }}/{{ effective_bundle_file }} is not a valid gzip archive.
+          The download likely returned an authentication/error response or was truncated.
+          Remove the invalid target file and provide a verified local bundle with LOCAL_BUNDLE_PATH,
+          or correct the Red Hat download URL and credentials. gzip reported:
+          {{ bundle_gzip_test.stderr | default('unknown validation error') }}
+      when:
+        - not bundle_already_ready | bool
+        - bundle_gzip_test.rc | default(1) != 0
+
     - name: Create temporary extraction directory
       ansible.builtin.tempfile:
         state: directory

@@ -1384,8 +1384,24 @@ download_bundle() {
   if [[ "${INSTALL_SCOPE:-}" == "remote" ]]; then
     resolve_target_context
     local_bundle_source=""
-    if [[ -f "${DOWNLOAD_DIR}/${BUNDLE_FILE}" ]] && tar -tf "${DOWNLOAD_DIR}/${BUNDLE_FILE}" >/dev/null 2>&1; then
+    if [[ -n "${LOCAL_BUNDLE_PATH:-}" ]] && [[ -f "${LOCAL_BUNDLE_PATH}" ]] \
+      && tar -tf "${LOCAL_BUNDLE_PATH}" >/dev/null 2>&1; then
+      local_bundle_source="${LOCAL_BUNDLE_PATH}"
+      BUNDLE_FILE="$(basename "${local_bundle_source}")"
+      BUNDLE_DIR_NAME="${BUNDLE_FILE%.tar.gz}"
+    elif [[ -f "${DOWNLOAD_DIR}/${BUNDLE_FILE}" ]] && tar -tf "${DOWNLOAD_DIR}/${BUNDLE_FILE}" >/dev/null 2>&1; then
       local_bundle_source="${DOWNLOAD_DIR}/${BUNDLE_FILE}"
+    else
+      while IFS= read -r candidate; do
+        if tar -tf "${candidate}" >/dev/null 2>&1; then
+          local_bundle_source="${candidate}"
+          BUNDLE_FILE="$(basename "${candidate}")"
+          BUNDLE_DIR_NAME="${BUNDLE_FILE%.tar.gz}"
+          break
+        fi
+      done < <(find "${DOWNLOAD_DIR}" -maxdepth 1 -type f \
+        -name 'ansible-automation-platform-containerized-setup-bundle-2.7-*-x86_64.tar.gz' \
+        -printf '%p\n' 2>/dev/null | sort -Vr)
     fi
     remote_vars_file="$(mktemp)"
     chmod 600 "${remote_vars_file}"
@@ -1979,7 +1995,7 @@ run_execution_playbook() {
   local install_dir
   local runtime_host_line runtime_user runtime_become runtime_conn runtime_redis_mode remote_user remote_uid controller_user controller_home controller_key
   local runtime_extra_vars
-  local remote_workflow_vars remote_bundle_dir
+  local remote_workflow_vars remote_bundle_dir remote_log_pid
   local ansible_verbosity
   local playbook_rc
   local -a ansible_cmd
@@ -2056,9 +2072,20 @@ run_execution_playbook() {
         AUTOMATIONMETRICS_HUB_READ_PG_PASSWORD: $AUTOMATIONMETRICS_HUB_READ_PG_PASSWORD
       }' > "${remote_workflow_vars}"
 
-    if ! run_project_playbook \
+    log "Streaming nested AAP playbook output from ${TARGET_DESC}:/tmp/aap_install.log."
+    remote_target_exec \
+      'while [[ ! -f /tmp/aap_install.log ]]; do sleep 1; done; exec tail -n +1 -F /tmp/aap_install.log' &
+    remote_log_pid=$!
+
+    playbook_rc=0
+    run_project_playbook \
       "${SCRIPT_DIR}/aap_workflow_project/playbooks/install_aap.yml" \
-      "${remote_workflow_vars}"; then
+      "${remote_workflow_vars}" || playbook_rc=$?
+
+    kill "${remote_log_pid}" 2>/dev/null || true
+    wait "${remote_log_pid}" 2>/dev/null || true
+
+    if (( playbook_rc != 0 )); then
       rm -f "${remote_workflow_vars}"
       err "Remote AAP ${playbook_name} workflow failed on ${TARGET_DESC}."
       return 1
