@@ -86,7 +86,7 @@
       pg_admin_password='{{ aap27_inventory_growth_admin_password }}'
       registry_username='{{ aap27_inventory_growth_registry_username }}'
       registry_password='{{ aap27_inventory_growth_registry_password }}'
-      ansible_user='admin'
+      ansible_user='{{ aap27_inventory_growth_admin_user }}'
       ansible_user_dir='{{ aap27_inventory_growth_admin_home }}'
       ansible_become_method='sudo'
       redis_mode='{{ aap27_inventory_growth_redis_mode }}'

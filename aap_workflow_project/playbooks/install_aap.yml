@@ -287,33 +287,14 @@
           }) }}
       no_log: true
 
-    - name: Write forwarded extra-vars file (atomic tmp write)
+    - name: Write forwarded extra-vars file
       ansible.builtin.copy:
-        dest: "{{ installer_bundle_dir }}/forwarded_extra_vars.yml.tmp"
+        dest: "{{ installer_bundle_dir }}/forwarded_extra_vars.yml"
         content: "{{ nested_forward_vars | default({}) | to_nice_yaml }}\n"
         owner: "{{ platform_admin_user }}"
         group: "{{ platform_admin_user }}"
         mode: "0600"
-      no_log: false
-
-    - name: Atomically move forwarded extra-vars into place
-      ansible.builtin.command:
-        argv:
-          - /bin/mv
-          - "{{ installer_bundle_dir }}/forwarded_extra_vars.yml.tmp"
-          - "{{ installer_bundle_dir }}/forwarded_extra_vars.yml"
-      become: true
-      become_user: root
-      changed_when: true
-      no_log: false
-
-    - name: Ensure forwarded extra-vars ownership and mode
-      ansible.builtin.file:
-        path: "{{ installer_bundle_dir }}/forwarded_extra_vars.yml"
-        owner: "{{ platform_admin_user }}"
-        group: "{{ platform_admin_user }}"
-        mode: "0600"
-      no_log: false
+      no_log: true
 
     - name: Ensure remote ~/.ansible/conf exists on installer node
       ansible.builtin.file:
@@ -422,6 +403,11 @@
         mode: '0755'
       become: true
 
+    - name: Check bundle-local Ansible virtualenv
+      ansible.builtin.stat:
+        path: "{{ installer_bundle_dir }}/.venv-aap27-runtime/bin/python"
+      register: bundle_venv_python
+
     - name: Ensure bundle-local ansible venv exists (create if missing)
       when: installer_bundle_dir is defined
       block:
@@ -455,6 +441,7 @@
           become: true
           become_user: "{{ installer_remote_user }}"
           changed_when: true
+          when: not (bundle_venv_python.stat.exists | default(false))
 
         - name: Upgrade pip in bundle venv
           ansible.builtin.command:
@@ -468,7 +455,8 @@
               - setuptools
           become: true
           become_user: "{{ installer_remote_user }}"
-          changed_when: true
+          register: bundle_pip_upgrade
+          changed_when: "'Successfully installed' in (bundle_pip_upgrade.stdout | default(''))"
           failed_when: false
 
         - name: Install runtime requirements into bundle venv (if requirements present)
@@ -485,7 +473,8 @@
             chdir: "{{ installer_bundle_dir }}"
           become: true
           become_user: "{{ installer_remote_user }}"
-          changed_when: true
+          register: bundle_runtime_requirements
+          changed_when: "'Successfully installed' in (bundle_runtime_requirements.stdout | default(''))"
           failed_when: false
         - name: Check for ansible-playbook in bundle venv
           ansible.builtin.stat:

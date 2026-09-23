@@ -977,8 +977,8 @@ test_inventory_growth_contract() {
     grep -q 'aap27_inventory_growth_target_address | length > 0' "${tasks_file}"
   assert_status "inventory role writes exact FQDN and ansible_host line" 0 \
     grep -q 'aap27_inventory_growth_target_fqdn }} ansible_host={{ aap27_inventory_growth_target_address' "${tasks_file}"
-  assert_status "inventory role forces admin Ansible user" 0 \
-    grep -q "ansible_user='admin'" "${tasks_file}"
+  assert_status "inventory role uses configured Ansible user" 0 \
+    grep -q "ansible_user='{{ aap27_inventory_growth_admin_user }}'" "${tasks_file}"
   assert_status "inventory role removes stale registry and identity keys" 0 \
     grep -q 'registry_username|registry_password|ansible_user' "${tasks_file}"
   assert_status "inventory playbook maps uppercase RHSM username" 0 \
@@ -987,6 +987,14 @@ test_inventory_growth_contract() {
     grep -q 'aap27_inventory_growth_registry_password: "{{ RHSM_PASSWORD }}"' "${prepare_playbook}"
   assert_status "install workflow forwards target address" 0 \
     grep -q 'aap27_inventory_growth_target_address: "{{ target_address }}"' "${install_playbook}"
+  assert_status "install workflow guards virtualenv creation" 0 \
+    grep -A15 -F 'name: Create bundle-local virtualenv for ansible runtime' "${install_playbook}" | \
+      grep -q 'when: not (bundle_venv_python.stat.exists | default(false))'
+  assert_status "install workflow writes forwarded vars directly" 0 \
+    grep -A4 -F 'name: Write forwarded extra-vars file' "${install_playbook}" | \
+      grep -q 'dest: "{{ installer_bundle_dir }}/forwarded_extra_vars.yml"'
+  assert_status "install workflow avoids always-changing forwarded vars move" 1 \
+    grep -q 'forwarded_extra_vars.yml.tmp' "${install_playbook}"
   assert_status "prework installs SSH no-host-key policy" 0 \
     grep -q '/etc/ssh/ssh_config.d/90-aap27-no-host-key-checking.conf' "${prework_playbook}"
   assert_status "prework notifies sshd restart" 0 \

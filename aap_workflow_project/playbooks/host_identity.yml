@@ -37,8 +37,12 @@
     - name: Set admin password when provided
       ansible.builtin.user:
         name: "{{ platform_admin_user }}"
-        password: "{{ effective_admin_password | password_hash('sha512') }}"
-      no_log: false
+        password: >-
+          {{ effective_admin_password | password_hash(
+            'sha512',
+            ((platform_admin_user ~ '@' ~ effective_target_fqdn) | hash('sha256'))[:16]
+          ) }}
+      no_log: true
       when: effective_admin_password | length > 0
 
     - name: Configure passwordless sudo for admin

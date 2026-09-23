@@ -1,5 +1,5 @@
 ---
-aap27_rootless_podman_user: admin
+aap27_rootless_podman_user: "{{ ADMIN_USER | default(ansible_user_id | default('admin')) }}"
 aap27_rootless_podman_create_user: true
 aap27_rootless_podman_install_packages: true
 aap27_rootless_podman_packages:
